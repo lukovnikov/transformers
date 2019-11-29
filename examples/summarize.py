@@ -148,9 +148,9 @@ def summarize(args, source, encoder_token_type_ids, encoder_mask, model, tokeniz
             symbols['EOS'],
             batch_size=batch_size,
             beam_size=5,
-            min_length=5,
-            max_length=10,
-            alpha=0.9,
+            min_length=50,
+            max_length=200,
+            alpha=0.95,
             block_repeating_trigrams=True,
             device=device,
         )
