@@ -98,7 +98,9 @@ def get_pretrained_BertAbs_model(path):
 # Summarization
 # -------------
 
+
 def evaluate(args, model, tokenizer):
+
     eval_dataset = load_and_cache_examples(args, tokenizer)
     eval_sampler = SequentialSampler(eval_dataset)
     eval_collate_fn = functools.partial(collate, tokenizer=tokenizer, block_size=512)
@@ -148,8 +150,8 @@ def summarize(args, source, encoder_token_type_ids, encoder_mask, model, tokeniz
             symbols['EOS'],
             batch_size=batch_size,
             beam_size=5,
-            min_length=50,
-            max_length=200,
+            min_length=20,
+            max_length=30,
             alpha=0.95,
             block_repeating_trigrams=True,
             device=device,
