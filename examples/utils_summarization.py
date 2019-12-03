@@ -80,7 +80,7 @@ def process_story(raw_story):
             story_lines.append(element)
         except IndexError:
             # if "@highlight" is absent from the file we pop
-            # all elements until there is None.
+            # all elements until there is None, raising an exception.
             return story_lines, []
 
     # gather summary lines
@@ -165,7 +165,7 @@ def compute_token_type_ids(batch, separator_token_id):
     """
     batch_embeddings = []
     for sequence in batch:
-        sentence_num = 0
+        sentence_num = -1
         embeddings = []
         for s in sequence:
             if s == separator_token_id:
