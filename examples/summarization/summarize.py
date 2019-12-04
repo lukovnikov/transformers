@@ -26,7 +26,6 @@ Batch = namedtuple("Batch", ["batch_size", "src", "segs", "mask_src", "tgt_str"]
 
 
 def evaluate(args):
-    # Model & Tokenizer
     tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", do_lower_case=True)
     model = get_pretrained_BertAbs_model("bert-ext-abs.pt", device=args.device)
 
@@ -35,11 +34,9 @@ def evaluate(args):
         "EOS": tokenizer.vocab["[unused1]"],
         "PAD": tokenizer.vocab["[PAD]"],
     }
-    starting_step = 0  # batch index at which the test dataset starts
 
     # these (unused) arguments are defined to keep the compatibility
     # with the legacy code and will be deleted in a next iteration.
-    args.recall_eval = False
     args.result_path = ""
     args.temp_dir = ""
 
@@ -57,8 +54,31 @@ def evaluate(args):
     logger.info("  Alpha (length penalty) = %.2f", args.alpha)
     logger.info("  Trigrams %s be blocked", ("will" if args.block_trigram else "will NOT"))
 
-    predictor.translate(data_iterator, starting_step)
+    for batch in data_iterator:
+        batch_data = predictor.translate_batch(batch)
+        translations = predictor.from_batch(batch_data)
+        summaries = [format_summary(t) for t in translations]
+        print(summaries)
 
+
+def format_summary(translation):
+    """ Transforms the output of the `from_batch` function
+    into nicely formatted summaries.
+    """
+    raw_summary, _, _ = translation
+    summary = (
+        raw_summary
+        .replace("[unused0]", "")
+        .replace("[unused3]", "")
+        .replace("[PAD]", "")
+        .replace("[unused1]", "")
+        .replace(r" +", " ")
+        .replace(" [unused2] ", "<q> ")
+        .replace("[unused2]", "")
+        .strip()
+    )
+
+    return summary
 
 #
 # BUILD the model
