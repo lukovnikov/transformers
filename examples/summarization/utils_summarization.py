@@ -25,29 +25,27 @@ class CNNDailyMailDataset(Dataset):
     [2] https://github.com/abisee/cnn-dailymail/
     """
 
-    def __init__(self, data_dir="", prefix="train"):
-        assert os.path.isdir(data_dir)
+    def __init__(self, path="", prefix="train"):
+        """ We initialize the class by listing all the documents to summarize.
+        Files are not read in memory due to the size of some datasets (like CNN/DailyMail).
+        """
+        assert os.path.isdir(path)
 
-        # We initialize the class by listing all the files that contain
-        # stories and summaries. Files are not read in memory given
-        # the size of the corpus.
-        self.stories_path = []
-        datasets = ("cnn", "dailymail")
-        for dataset in datasets:
-            path_to_stories = os.path.join(data_dir, dataset, "stories")
-            story_filenames_list = os.listdir(path_to_stories)
-            for story_filename in story_filenames_list:
-                path_to_story = os.path.join(path_to_stories, story_filename)
-                if not os.path.isfile(path_to_story):
-                    continue
-                self.stories_path.append(path_to_story)
+        self.documents = []
+        story_filenames_list = os.listdir(path)
+        for story_filename in story_filenames_list:
+            path_to_story = os.path.join(path, story_filename)
+            if not os.path.isfile(path_to_story):
+                continue
+            self.documents.append(path_to_story)
 
     def __len__(self):
-        return len(self.stories_path)
+        """ Returns the number of documents. """
+        return len(self.documents)
 
     def __getitem__(self, idx):
-        story_path = self.stories_path[idx]
-        with open(story_path, encoding="utf-8") as source:
+        document_path = self.documents[idx]
+        with open(document_path, encoding="utf-8") as source:
             raw_story = source.read()
             story_lines, summary_lines = process_story(raw_story)
         return story_lines, summary_lines
@@ -112,14 +110,6 @@ def fit_to_block_size(sequence, block_size, pad_token_id):
     else:
         sequence.extend([pad_token_id] * (block_size - len(sequence)))
         return sequence
-
-
-def build_lm_labels(sequence, pad_token_id):
-    """ Padding token are replaced by the value -1 so they
-    are not taken into account in the loss computation. """
-    padded = sequence.clone()
-    padded[padded == pad_token_id] = -1
-    return padded
 
 
 def build_mask(sequence, pad_token_id):
