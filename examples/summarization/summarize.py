@@ -6,7 +6,7 @@ import sys
 import torch
 from torch.utils.data import DataLoader, SequentialSampler
 
-from model_bertabs import BertAbsSummarizer, TransformerDecoderState
+from model_bertabs import BertAbsSummarizer, TransformerDecoderState, build_predictor
 from transformers.generate import BeamSearch
 from transformers import BertTokenizer
 
@@ -16,10 +16,7 @@ from utils_summarization import (
     build_mask,
     fit_to_block_size,
     compute_token_type_ids,
-    build_lm_labels,
 )
-
-from predictor import build_predictor
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
@@ -34,7 +31,12 @@ def load_and_cache_examples(args, tokenizer):
 
 
 def collate(data, tokenizer, block_size):
-    """ List of tuple as an input. """
+    """ Collate formats the data passed to the data loader.
+
+    In particular we tokenize the data batch after batch to avoid keeping them
+    all in memory. We output the data as a namedtuple to fit the original BertAbs's
+    API.
+    """
     # remove the files with empty an story/summary, encode and fit to block
     data = [x for x in data if not (len(x[0]) == 0 or len(x[1]) == 0)]
     data = filter(lambda x: not (len(x[0]) == 0 or len(x[1]) == 0), data)
@@ -48,7 +50,6 @@ def collate(data, tokenizer, block_size):
     ]
 
     stories = torch.tensor([story for story, summary in data])
-    # summaries = torch.tensor([summary for story, summary in data])
     encoder_token_type_ids = compute_token_type_ids(stories, tokenizer.cls_token_id)
     encoder_mask = build_mask(stories, tokenizer.pad_token_id)
 
