@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
 
-Batch = namedtuple("Batch", ["batch_size", "src", "segs", "mask_src", "tgt_str"])
+Batch = namedtuple("Batch", ["document_names", "batch_size", "src", "segs", "mask_src", "tgt_str"])
 
 
 def evaluate(args):
@@ -58,7 +58,7 @@ def evaluate(args):
         batch_data = predictor.translate_batch(batch)
         translations = predictor.from_batch(batch_data)
         summaries = [format_summary(t) for t in translations]
-        print(summaries)
+        save_summaries(summaries, args.summaries_output_dir, batch.document_names)
 
 
 def format_summary(translation):
@@ -73,12 +73,39 @@ def format_summary(translation):
         .replace("[PAD]", "")
         .replace("[unused1]", "")
         .replace(r" +", " ")
-        .replace(" [unused2] ", "<q> ")
+        .replace(" [unused2] ", ". ")
         .replace("[unused2]", "")
         .strip()
     )
 
     return summary
+
+
+def save_summaries(summaries, path, original_document_name):
+    """ Write the summaries in fies that are prefixed by the original
+    files' name with the `_summary` appended.
+
+    Attributes:
+        original_document_names: List[string]
+            Name of the document that was summarized.
+        path: string
+            Path were the summaries will be written
+        summaries: List[string]
+            The summaries that we produced.
+    """
+    for summary, document_name in zip(summaries, original_document_name):
+        # Prepare the summary file's name
+        if "." in document_name:
+            bare_document_name = ".".join(document_name.split(".")[:-1])
+            extension = document_name.split(".")[-1]
+            name = bare_document_name + "_summary." + extension
+        else:
+            name = document_name + "_summary"
+
+        file_path = os.path.join(path, name)
+        with open(file_path, "w") as output:
+            output.write(summary)
+
 
 #
 # BUILD the model
@@ -162,22 +189,18 @@ def collate(data, tokenizer, block_size):
     API.
     """
     # remove the files with empty an story/summary, encode and fit to block
-    data = [x for x in data if not (len(x[0]) == 0 or len(x[1]) == 0)]
-    data = filter(lambda x: not (len(x[0]) == 0 or len(x[1]) == 0), data)
-    data = [encode_for_summarization(story, summary, tokenizer) for story, summary in data]
-    data = [
-        (
-            fit_to_block_size(story, block_size, tokenizer.pad_token_id),
-            fit_to_block_size(summary, block_size, tokenizer.pad_token_id),
-        )
-        for story, summary in data
-    ]
+    data = [x for x in data if not (len(x[1]) == 0 or len(x[2]) == 0)]
+    names = [name for name, _, _ in data]
 
-    stories = torch.tensor([story for story, summary in data])
+    encoded_text = [encode_for_summarization(story, summary, tokenizer) for _, story, summary in data]
+    stories = torch.tensor(
+        [fit_to_block_size(story, block_size, tokenizer.pad_token_id) for story, _ in encoded_text]
+    )
     encoder_token_type_ids = compute_token_type_ids(stories, tokenizer.cls_token_id)
     encoder_mask = build_mask(stories, tokenizer.pad_token_id)
 
     batch = Batch(
+        document_names=names,
         batch_size=len(stories),
         src=stories,
         segs=encoder_token_type_ids,

@@ -45,10 +45,11 @@ class CNNDailyMailDataset(Dataset):
 
     def __getitem__(self, idx):
         document_path = self.documents[idx]
+        document_name = document_path.split("/")[-1]
         with open(document_path, encoding="utf-8") as source:
             raw_story = source.read()
             story_lines, summary_lines = process_story(raw_story)
-        return story_lines, summary_lines
+        return document_name, story_lines, summary_lines
 
 
 def process_story(raw_story):
