@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from torch import nn
 from torch.nn.init import xavier_uniform_
-from transformers import BertModel, BertConfig, PreTrainedEncoderDecoder
+from transformers import BertModel, BertConfig
 
 
 MAX_SIZE = 5000
@@ -47,32 +47,32 @@ class BertAbsSummarizer(nn.Module):
         super(BertAbsSummarizer, self).__init__()
         self.args = args
         self.device = device
-        self.encoder = Bert(args.large, args.temp_dir, args.finetune_bert)
+        self.bert = Bert(args.large, args.temp_dir, args.finetune_bert)
 
         # If pre-trained weights are passed for Bert, load these.
         load_bert_pretrained_extractive = True if bert_extractive_checkpoint else False
         if load_bert_pretrained_extractive:
-            self.encoder.model.load_state_dict(
+            self.bert.model.load_state_dict(
                 dict([(n[11:], p) for n, p in bert_extractive_checkpoint.items() if n.startswith('bert.model')]), strict=True)
 
         if (args.encoder == 'baseline'):
-            bert_config = BertConfig(self.encoder.model.config.vocab_size, hidden_size=args.enc_hidden_size,
+            bert_config = BertConfig(self.bert.model.config.vocab_size, hidden_size=args.enc_hidden_size,
                                      num_hidden_layers=args.enc_layers, num_attention_heads=8,
                                      intermediate_size=args.enc_ff_size,
                                      hidden_dropout_prob=args.enc_dropout,
                                      attention_probs_dropout_prob=args.enc_dropout)
-            self.encoder.model = BertModel(bert_config)
+            self.bert.model = BertModel(bert_config)
 
-        self.vocab_size = self.encoder.model.config.vocab_size
+        self.vocab_size = self.bert.model.config.vocab_size
 
         if(args.max_pos > 512):
-            my_pos_embeddings = nn.Embedding(args.max_pos, self.encoder.model.config.hidden_size)
-            my_pos_embeddings.weight.data[:512] = self.encoder.model.embeddings.position_embeddings.weight.data
-            my_pos_embeddings.weight.data[512:] = self.encoder.model.embeddings.position_embeddings.weight.data[-1][None, :].repeat(args.max_pos - 512, 1)
-            self.encoder.model.embeddings.position_embeddings = my_pos_embeddings
-        tgt_embeddings = nn.Embedding(self.vocab_size, self.encoder.model.config.hidden_size, padding_idx=0)
+            my_pos_embeddings = nn.Embedding(args.max_pos, self.bert.model.config.hidden_size)
+            my_pos_embeddings.weight.data[:512] = self.bert.model.embeddings.position_embeddings.weight.data
+            my_pos_embeddings.weight.data[512:] = self.bert.model.embeddings.position_embeddings.weight.data[-1][None, :].repeat(args.max_pos - 512, 1)
+            self.bert.model.embeddings.position_embeddings = my_pos_embeddings
+        tgt_embeddings = nn.Embedding(self.vocab_size, self.bert.model.config.hidden_size, padding_idx=0)
         if (self.args.share_emb):
-            tgt_embeddings.weight = copy.deepcopy(self.encoder.model.embeddings.word_embeddings.weight)
+            tgt_embeddings.weight = copy.deepcopy(self.bert.model.embeddings.word_embeddings.weight)
 
         self.decoder = TransformerDecoder(
             self.args.dec_layers,
@@ -84,6 +84,9 @@ class BertAbsSummarizer(nn.Module):
             vocab_size=self.vocab_size,
             device=device,
         )
+
+        self.generator = get_generator(self.vocab_size, self.args.dec_hidden_size, device)
+        self.generator[0].weight = self.decoder.embeddings.weight
 
         load_from_checkpoints = False if checkpoint is None else True
         if load_from_checkpoints:
@@ -108,8 +111,8 @@ class BertAbsSummarizer(nn.Module):
 
     def maybe_tie_embeddings(self, args):
         if(args.use_bert_emb):
-            tgt_embeddings = nn.Embedding(self.vocab_size, self.encoder.model.config.hidden_size, padding_idx=0)
-            tgt_embeddings.weight = copy.deepcopy(self.encoder.model.embeddings.word_embeddings.weight)
+            tgt_embeddings = nn.Embedding(self.vocab_size, self.bert.model.config.hidden_size, padding_idx=0)
+            tgt_embeddings.weight = copy.deepcopy(self.bert.model.embeddings.word_embeddings.weight)
             self.decoder.embeddings = tgt_embeddings
 
     @classmethod
@@ -120,7 +123,7 @@ class BertAbsSummarizer(nn.Module):
     # **kwargs prefixed by encoder_ or decoder_ are passed to respective
     # forward function.
     def forward(self, encoder_input_ids, decoder_input_ids, token_type_ids, encoder_attention_mask, decoder_attention_mask):
-        encoder_output = self.encoder(
+        encoder_output = self.bert(
             input_ids=encoder_input_ids,
             token_type_ids=token_type_ids,
             attention_mask=encoder_attention_mask
@@ -148,15 +151,15 @@ class Bert(nn.Module):
     def forward(self, input_ids, attention_mask=None, token_type_ids=None, **kwargs):
         self.eval()
         with torch.no_grad():
-            encoder_outputs = self.model(input_ids, token_type_ids=token_type_ids, attention_mask=attention_mask, **kwargs)
+            encoder_outputs, _ = self.model(input_ids, token_type_ids=token_type_ids, attention_mask=attention_mask, **kwargs)
         return encoder_outputs
 
 
 def get_generator(vocab_size, dec_hidden_size, device):
-    #gen_func = nn.LogSoftmax(dim=-1)
+    gen_func = nn.LogSoftmax(dim=-1)
     generator = nn.Sequential(
         nn.Linear(dec_hidden_size, vocab_size),
-    #    gen_func
+        gen_func
     )
     generator.to(device)
 
@@ -186,9 +189,6 @@ class TransformerDecoder(nn.Module):
         self.num_layers = num_layers
         self.embeddings = embeddings
         self.pos_emb = PositionalEncoding(dropout, self.embeddings.embedding_dim)
-
-        self.generator = get_generator(vocab_size, d_model, device)
-        # self.generator[0].weight = self.embeddings.weight
 
         # Build TransformerDecoder.
         self.transformer_layers = nn.ModuleList(
@@ -265,15 +265,9 @@ class TransformerDecoder(nn.Module):
         if state.cache is None:
             state = state.update_state(tgt, saved_inputs)
 
-        # The authors use "generator" in their beam search directly.
-        # To conform with their API we apply the generator here,
-        # although it would make more sense to define a
-        # BertAbsWithGenerator class that subclasses this one.
-        output = self.generator(output)
-
         # Decoders in transformers return a tuple. Beam search will fail
         # if we don't follow this convention.
-        return (output,), state  # , state
+        return output, state  # , state
 
     def init_decoder_state(self, src, memory_bank,
                            with_cache=False):
