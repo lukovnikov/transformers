@@ -39,7 +39,6 @@ MAX_SIZE = 5000
 
 BERTABS_FINETUNED_MODEL_MAP = {
     "bertabs-finetuned-cnndm": "https://s3.amazonaws.com/models.huggingface.co/bert/remi/bertabs-finetuned-cnndm-extractive-abstractive-summarization-pytorch_model.bin",
-    "bertabs-finetuned-xsum": "https://s3.amazonaws.com/models.huggingface.co/bert/remi/bertabs-finetuned-xsum-extractive-abstractive-summarization-pytorch_model.bin"
 }
 
 

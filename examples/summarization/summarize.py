@@ -24,12 +24,16 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
 
-Batch = namedtuple("Batch", ["document_names", "batch_size", "src", "segs", "mask_src", "tgt_str"])
+Batch = namedtuple(
+    "Batch", ["document_names", "batch_size", "src", "segs", "mask_src", "tgt_str"]
+)
 
 
 def evaluate(args):
     tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", do_lower_case=True)
-    model = bertabs = BertAbs.from_pretrained('bertabs-finetuned-cnndm')
+    model = bertabs = BertAbs.from_pretrained(
+        "bertabs-finetuned-{}".format(args.finetuned_model)
+    )
     bertabs.to(args.device)
     bertabs.eval()
 
@@ -71,8 +75,7 @@ def format_summary(translation):
     """
     raw_summary, _, _ = translation
     summary = (
-        raw_summary
-        .replace("[unused0]", "")
+        raw_summary.replace("[unused0]", "")
         .replace("[unused3]", "")
         .replace("[PAD]", "")
         .replace("[unused1]", "")
@@ -142,9 +145,14 @@ def collate(data, tokenizer, block_size):
     data = [x for x in data if not len(x[1]) == 0]  # remove empty_files
     names = [name for name, _, _ in data]
 
-    encoded_text = [encode_for_summarization(story, summary, tokenizer) for _, story, summary in data]
+    encoded_text = [
+        encode_for_summarization(story, summary, tokenizer) for _, story, summary in data
+    ]
     stories = torch.tensor(
-        [fit_to_block_size(story, block_size, tokenizer.pad_token_id) for story, _ in encoded_text]
+        [
+            fit_to_block_size(story, block_size, tokenizer.pad_token_id)
+            for story, _ in encoded_text
+        ]
     )
     encoder_token_type_ids = compute_token_type_ids(stories, tokenizer.cls_token_id)
     encoder_mask = build_mask(stories, tokenizer.pad_token_id)
