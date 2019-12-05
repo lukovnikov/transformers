@@ -41,10 +41,9 @@ BERTABS_FINETUNED_MODEL_MAP = {
 
 
 class BertAbsSummarizer(PreTrainedModel):
-    def __init__(self, args, device, checkpoint=None, bert_extractive_checkpoint=None):
+    def __init__(self, args, checkpoint=None, bert_extractive_checkpoint=None):
         super(BertAbsSummarizer, self).__init__(args)
         self.args = args
-        self.device = device
         self.bert = Bert(args.large, args.temp_dir, args.finetune_bert)
 
         # If pre-trained weights are passed for Bert, load these.
@@ -106,17 +105,17 @@ class BertAbsSummarizer(PreTrainedModel):
             dropout=self.args.dec_dropout,
             embeddings=tgt_embeddings,
             vocab_size=self.vocab_size,
-            device=device,
         )
 
-        self.generator = get_generator(self.vocab_size, self.args.dec_hidden_size, device)
+        gen_func = nn.LogSoftmax(dim=-1)
+        self.generator = nn.Sequential(
+            nn.Linear(args.dec_hidden_size, args.vocab_size), gen_func
+        )
         self.generator[0].weight = self.decoder.embeddings.weight
 
         load_from_checkpoints = False if checkpoint is None else True
         if load_from_checkpoints:
             self.load_state_dict(checkpoint)
-
-        self.to(device)
 
     def init_weights(self):
         for module in self.decoder.modules():
@@ -191,14 +190,6 @@ class Bert(nn.Module):
         return encoder_outputs
 
 
-def get_generator(vocab_size, dec_hidden_size, device):
-    gen_func = nn.LogSoftmax(dim=-1)
-    generator = nn.Sequential(nn.Linear(dec_hidden_size, vocab_size), gen_func)
-    generator.to(device)
-
-    return generator
-
-
 class TransformerDecoder(nn.Module):
     """
     The Transformer decoder from "Attention is All You Need".
@@ -214,9 +205,7 @@ class TransformerDecoder(nn.Module):
        attn_type (str): if using a seperate copy attention
     """
 
-    def __init__(
-        self, num_layers, d_model, heads, d_ff, dropout, embeddings, vocab_size, device
-    ):
+    def __init__(self, num_layers, d_model, heads, d_ff, dropout, embeddings, vocab_size):
         super(TransformerDecoder, self).__init__()
 
         # Basic attributes.
