@@ -6,12 +6,15 @@ import sys
 
 import torch
 from torch.utils.data import DataLoader, SequentialSampler
+from tqdm import tqdm
 
-from model_bertabs import BertAbsSummarizer, build_predictor
 from transformers import BertTokenizer
 
+from modeling_bertabs import BertAbsSummarizer, build_predictor
+from configuration_bertabs import BertAbsConfig
+
 from utils_summarization import (
-    CNNDailyMailDataset,
+    SummarizationDataset,
     encode_for_summarization,
     build_mask,
     fit_to_block_size,
@@ -44,7 +47,7 @@ def evaluate(args):
     predictor = build_predictor(args, tokenizer, symbols, model)
 
     logger.info("***** Running evaluation *****")
-    logger.info("  Num examples = %d", len(data_iterator))
+    logger.info("  Number examples = %d", len(data_iterator.dataset))
     logger.info("  Batch size = %d", args.batch_size)
     logger.info("")
     logger.info("***** Beam Search parameters *****")
@@ -54,7 +57,7 @@ def evaluate(args):
     logger.info("  Alpha (length penalty) = %.2f", args.alpha)
     logger.info("  Trigrams %s be blocked", ("will" if args.block_trigram else "will NOT"))
 
-    for batch in data_iterator:
+    for batch in tqdm(data_iterator):
         batch_data = predictor.translate_batch(batch)
         translations = predictor.from_batch(batch_data)
         summaries = [format_summary(t) for t in translations]
@@ -113,46 +116,7 @@ def save_summaries(summaries, path, original_document_name):
 
 
 def get_pretrained_BertAbs_model(path, device):
-    BertAbsConfig = namedtuple(
-        "BertAbsConfig",
-        [
-            "temp_dir",
-            "large",
-            "finetune_bert",
-            "encoder",
-            "share_emb",
-            "max_pos",
-            "enc_layers",
-            "enc_hidden_size",
-            "enc_heads",
-            "enc_ff_size",
-            "enc_dropout",
-            "dec_layers",
-            "dec_hidden_size",
-            "dec_heads",
-            "dec_ff_size",
-            "dec_dropout",
-        ],
-    )
-
-    config = BertAbsConfig(
-        temp_dir=".",
-        finetune_bert=False,
-        large=False,
-        share_emb=True,
-        encoder="bert",
-        max_pos=512,
-        enc_layers=6,
-        enc_hidden_size=512,
-        enc_heads=8,
-        enc_ff_size=512,
-        enc_dropout=0.2,
-        dec_layers=6,
-        dec_hidden_size=768,
-        dec_heads=8,
-        dec_ff_size=2048,
-        dec_dropout=0.2,
-    )
+    config = BertAbsConfig()
     checkpoints = torch.load(path, lambda storage, loc: storage)
     bertabs = BertAbsSummarizer.from_pretrained(checkpoints, config, device)
     bertabs.eval()
@@ -177,7 +141,7 @@ def build_data_iterator(args, tokenizer):
 
 
 def load_and_cache_examples(args, tokenizer):
-    dataset = CNNDailyMailDataset(args.documents_dir)
+    dataset = SummarizationDataset(args.documents_dir)
     return dataset
 
 
@@ -188,8 +152,7 @@ def collate(data, tokenizer, block_size):
     all in memory. We output the data as a namedtuple to fit the original BertAbs's
     API.
     """
-    # remove the files with empty an story/summary, encode and fit to block
-    data = [x for x in data if not (len(x[1]) == 0 or len(x[2]) == 0)]
+    data = [x for x in data if not len(x[1]) == 0]  # remove empty_files
     names = [name for name, _, _ in data]
 
     encoded_text = [encode_for_summarization(story, summary, tokenizer) for _, story, summary in data]

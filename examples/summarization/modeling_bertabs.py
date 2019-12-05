@@ -36,36 +36,9 @@ from transformers import BertModel, BertConfig
 
 MAX_SIZE = 5000
 
-
-BertAbsConfig = namedtuple(
-    "BertAbsConfig",
-    ["temp_dir", "large", "finetune_bert", "encoder", "share_emb", "max_pos", "enc_layers", "enc_hidden_size", "enc_heads", "enc_ff_size", "enc_dropout", "dec_layers", "dec_hidden_size", "dec_heads", "dec_ff_size", "dec_dropout"],
-)
-
-
-def get_bertabs(path_to_checkpoints):
-    config = BertAbsConfig(
-        temp_dir=".",
-        finetune_bert=False,
-        large=False,
-        share_emb=True,
-        encoder="bert",
-        max_pos=512,
-        enc_layers=6,
-        enc_hidden_size=512,
-        enc_heads=8,
-        enc_ff_size=512,
-        enc_dropout=0.2,
-        dec_layers=6,
-        dec_hidden_size=768,
-        dec_heads=8,
-        dec_ff_size=2048,
-        dec_dropout=0.2,
-    )
-    checkpoints = torch.load(path_to_checkpoints, lambda storage, loc: storage)
-    bertabs = BertAbsSummarizer.from_pretrained(checkpoints, config, torch.device("cpu"))
-    bertabs.eval()
-    return bertabs
+BERTABS_FINETUNED_MODEL_MAP = {
+    "bert-ext-abs": "https://s3.amazonaws.com/models.huggingface.co/bertabs/bertabs-finetuned-abstractive-summarization-pytorch_model.bin"
+}
 
 
 class BertAbsSummarizer(nn.Module):
@@ -79,26 +52,52 @@ class BertAbsSummarizer(nn.Module):
         load_bert_pretrained_extractive = True if bert_extractive_checkpoint else False
         if load_bert_pretrained_extractive:
             self.bert.model.load_state_dict(
-                dict([(n[11:], p) for n, p in bert_extractive_checkpoint.items() if n.startswith('bert.model')]), strict=True)
+                dict(
+                    [
+                        (n[11:], p)
+                        for n, p in bert_extractive_checkpoint.items()
+                        if n.startswith("bert.model")
+                    ]
+                ),
+                strict=True,
+            )
 
-        if (args.encoder == 'baseline'):
-            bert_config = BertConfig(self.bert.model.config.vocab_size, hidden_size=args.enc_hidden_size,
-                                     num_hidden_layers=args.enc_layers, num_attention_heads=8,
-                                     intermediate_size=args.enc_ff_size,
-                                     hidden_dropout_prob=args.enc_dropout,
-                                     attention_probs_dropout_prob=args.enc_dropout)
+        if args.encoder == "baseline":
+            bert_config = BertConfig(
+                self.bert.model.config.vocab_size,
+                hidden_size=args.enc_hidden_size,
+                num_hidden_layers=args.enc_layers,
+                num_attention_heads=8,
+                intermediate_size=args.enc_ff_size,
+                hidden_dropout_prob=args.enc_dropout,
+                attention_probs_dropout_prob=args.enc_dropout,
+            )
             self.bert.model = BertModel(bert_config)
 
         self.vocab_size = self.bert.model.config.vocab_size
 
-        if(args.max_pos > 512):
-            my_pos_embeddings = nn.Embedding(args.max_pos, self.bert.model.config.hidden_size)
-            my_pos_embeddings.weight.data[:512] = self.bert.model.embeddings.position_embeddings.weight.data
-            my_pos_embeddings.weight.data[512:] = self.bert.model.embeddings.position_embeddings.weight.data[-1][None, :].repeat(args.max_pos - 512, 1)
+        if args.max_pos > 512:
+            my_pos_embeddings = nn.Embedding(
+                args.max_pos, self.bert.model.config.hidden_size
+            )
+            my_pos_embeddings.weight.data[
+                :512
+            ] = self.bert.model.embeddings.position_embeddings.weight.data
+            my_pos_embeddings.weight.data[
+                512:
+            ] = self.bert.model.embeddings.position_embeddings.weight.data[-1][
+                None, :
+            ].repeat(
+                args.max_pos - 512, 1
+            )
             self.bert.model.embeddings.position_embeddings = my_pos_embeddings
-        tgt_embeddings = nn.Embedding(self.vocab_size, self.bert.model.config.hidden_size, padding_idx=0)
-        if (self.args.share_emb):
-            tgt_embeddings.weight = copy.deepcopy(self.bert.model.embeddings.word_embeddings.weight)
+        tgt_embeddings = nn.Embedding(
+            self.vocab_size, self.bert.model.config.hidden_size, padding_idx=0
+        )
+        if self.args.share_emb:
+            tgt_embeddings.weight = copy.deepcopy(
+                self.bert.model.embeddings.word_embeddings.weight
+            )
 
         self.decoder = TransformerDecoder(
             self.args.dec_layers,
@@ -136,52 +135,70 @@ class BertAbsSummarizer(nn.Module):
                 p.data.zero_()
 
     def maybe_tie_embeddings(self, args):
-        if(args.use_bert_emb):
-            tgt_embeddings = nn.Embedding(self.vocab_size, self.bert.model.config.hidden_size, padding_idx=0)
-            tgt_embeddings.weight = copy.deepcopy(self.bert.model.embeddings.word_embeddings.weight)
+        if args.use_bert_emb:
+            tgt_embeddings = nn.Embedding(
+                self.vocab_size, self.bert.model.config.hidden_size, padding_idx=0
+            )
+            tgt_embeddings.weight = copy.deepcopy(
+                self.bert.model.embeddings.word_embeddings.weight
+            )
             self.decoder.embeddings = tgt_embeddings
 
     @classmethod
     def from_pretrained(cls, checkpoints, config, device):
         return cls(config, device, checkpoints)
 
-    def forward(self, encoder_input_ids, decoder_input_ids, token_type_ids, encoder_attention_mask, decoder_attention_mask):
+    def forward(
+        self,
+        encoder_input_ids,
+        decoder_input_ids,
+        token_type_ids,
+        encoder_attention_mask,
+        decoder_attention_mask,
+    ):
         encoder_output = self.bert(
             input_ids=encoder_input_ids,
             token_type_ids=token_type_ids,
-            attention_mask=encoder_attention_mask
+            attention_mask=encoder_attention_mask,
         )
         encoder_hidden_states = encoder_output[0]
-        dec_state = self.decoder.init_decoder_state(encoder_input_ids, encoder_hidden_states)
-        decoder_outputs, _ = self.decoder(decoder_input_ids[:, :-1], encoder_hidden_states, dec_state)
+        dec_state = self.decoder.init_decoder_state(
+            encoder_input_ids, encoder_hidden_states
+        )
+        decoder_outputs, _ = self.decoder(
+            decoder_input_ids[:, :-1], encoder_hidden_states, dec_state
+        )
         return decoder_outputs
 
 
 class Bert(nn.Module):
     """ This class is not really necessary and should probably disappear.
     """
+
     def __init__(self, large, temp_dir, finetune=False):
         super(Bert, self).__init__()
-        if(large):
-            self.model = BertModel.from_pretrained('bert-large-uncased', cache_dir=temp_dir)
+        if large:
+            self.model = BertModel.from_pretrained("bert-large-uncased", cache_dir=temp_dir)
         else:
-            self.model = BertModel.from_pretrained('bert-base-uncased', cache_dir=temp_dir)
+            self.model = BertModel.from_pretrained("bert-base-uncased", cache_dir=temp_dir)
 
         self.finetune = finetune
 
     def forward(self, input_ids, attention_mask=None, token_type_ids=None, **kwargs):
         self.eval()
         with torch.no_grad():
-            encoder_outputs, _ = self.model(input_ids, token_type_ids=token_type_ids, attention_mask=attention_mask, **kwargs)
+            encoder_outputs, _ = self.model(
+                input_ids,
+                token_type_ids=token_type_ids,
+                attention_mask=attention_mask,
+                **kwargs
+            )
         return encoder_outputs
 
 
 def get_generator(vocab_size, dec_hidden_size, device):
     gen_func = nn.LogSoftmax(dim=-1)
-    generator = nn.Sequential(
-        nn.Linear(dec_hidden_size, vocab_size),
-        gen_func
-    )
+    generator = nn.Sequential(nn.Linear(dec_hidden_size, vocab_size), gen_func)
     generator.to(device)
 
     return generator
@@ -202,27 +219,41 @@ class TransformerDecoder(nn.Module):
        attn_type (str): if using a seperate copy attention
     """
 
-    def __init__(self, num_layers, d_model, heads, d_ff, dropout, embeddings, vocab_size, device):
+    def __init__(
+        self, num_layers, d_model, heads, d_ff, dropout, embeddings, vocab_size, device
+    ):
         super(TransformerDecoder, self).__init__()
-        
+
         # Basic attributes.
-        self.decoder_type = 'transformer'
+        self.decoder_type = "transformer"
         self.num_layers = num_layers
         self.embeddings = embeddings
         self.pos_emb = PositionalEncoding(dropout, self.embeddings.embedding_dim)
 
         # Build TransformerDecoder.
         self.transformer_layers = nn.ModuleList(
-            [TransformerDecoderLayer(d_model, heads, d_ff, dropout)
-             for _ in range(num_layers)])
+            [
+                TransformerDecoderLayer(d_model, heads, d_ff, dropout)
+                for _ in range(num_layers)
+            ]
+        )
 
         self.layer_norm = nn.LayerNorm(d_model, eps=1e-6)
 
     # forward(input_ids, attention_mask, encoder_hidden_states, encoder_attention_mask)
     # def forward(self, input_ids, state, attention_mask=None, memory_lengths=None,
     # step=None, cache=None, encoder_attention_mask=None, encoder_hidden_states=None, memory_masks=None):
-    def forward(self, input_ids, encoder_hidden_states=None, state=None, attention_mask=None, memory_lengths=None,
-                step=None, cache=None, encoder_attention_mask=None):
+    def forward(
+        self,
+        input_ids,
+        encoder_hidden_states=None,
+        state=None,
+        attention_mask=None,
+        memory_lengths=None,
+        step=None,
+        cache=None,
+        encoder_attention_mask=None,
+    ):
         """
         See :obj:`onmt.modules.RNNDecoderBase.forward()`
         memory_bank = encoder_hidden_states
@@ -235,22 +266,26 @@ class TransformerDecoder(nn.Module):
         # src_words = state.src
         src_words = state.src
         src_batch, src_len = src_words.size()
-        
+
         padding_idx = self.embeddings.padding_idx
 
         # Decoder padding mask
         tgt_words = tgt
         tgt_batch, tgt_len = tgt_words.size()
-        tgt_pad_mask = tgt_words.data.eq(padding_idx).unsqueeze(1) \
-            .expand(tgt_batch, tgt_len, tgt_len)
+        tgt_pad_mask = (
+            tgt_words.data.eq(padding_idx).unsqueeze(1).expand(tgt_batch, tgt_len, tgt_len)
+        )
 
         # Encoder padding mask
         if memory_mask is not None:
             src_len = memory_mask.size(-1)
             src_pad_mask = memory_mask.expand(src_batch, tgt_len, src_len)
         else:
-            src_pad_mask = src_words.data.eq(padding_idx).unsqueeze(1) \
+            src_pad_mask = (
+                src_words.data.eq(padding_idx)
+                .unsqueeze(1)
                 .expand(src_batch, tgt_len, src_len)
+            )
 
         # Pass through the embeddings
         emb = self.embeddings(input_ids)
@@ -272,8 +307,10 @@ class TransformerDecoder(nn.Module):
                 src_pad_mask,
                 tgt_pad_mask,
                 previous_input=prev_layer_input,
-                layer_cache=state.cache["layer_{}".format(i)] if state.cache is not None else None,
-                step=step
+                layer_cache=state.cache["layer_{}".format(i)]
+                if state.cache is not None
+                else None,
+                step=step,
             )
             if state.cache is None:
                 saved_inputs.append(all_input)
@@ -290,8 +327,7 @@ class TransformerDecoder(nn.Module):
         # if we don't follow this convention.
         return output, state  # , state
 
-    def init_decoder_state(self, src, memory_bank,
-                           with_cache=False):
+    def init_decoder_state(self, src, memory_bank, with_cache=False):
         """ Init decoder state """
         state = TransformerDecoderState(src)
         if with_cache:
@@ -303,28 +339,29 @@ class PositionalEncoding(nn.Module):
     def __init__(self, dropout, dim, max_len=5000):
         pe = torch.zeros(max_len, dim)
         position = torch.arange(0, max_len).unsqueeze(1)
-        div_term = torch.exp((torch.arange(0, dim, 2, dtype=torch.float) *
-                              -(math.log(10000.0) / dim)))
+        div_term = torch.exp(
+            (torch.arange(0, dim, 2, dtype=torch.float) * -(math.log(10000.0) / dim))
+        )
         pe[:, 0::2] = torch.sin(position.float() * div_term)
         pe[:, 1::2] = torch.cos(position.float() * div_term)
         pe = pe.unsqueeze(0)
         super(PositionalEncoding, self).__init__()
-        self.register_buffer('pe', pe)
+        self.register_buffer("pe", pe)
         self.dropout = nn.Dropout(p=dropout)
         self.dim = dim
 
     def forward(self, emb, step=None):
         emb = emb * math.sqrt(self.dim)
-        if (step):
+        if step:
             emb = emb + self.pe[:, step][:, None, :]
 
         else:
-            emb = emb + self.pe[:, :emb.size(1)]
+            emb = emb + self.pe[:, : emb.size(1)]
         emb = self.dropout(emb)
         return emb
 
     def get_emb(self, emb):
-        return self.pe[:, :emb.size(1)]
+        return self.pe[:, : emb.size(1)]
 
 
 class TransformerDecoderLayer(nn.Module):
@@ -342,12 +379,9 @@ class TransformerDecoderLayer(nn.Module):
     def __init__(self, d_model, heads, d_ff, dropout):
         super(TransformerDecoderLayer, self).__init__()
 
+        self.self_attn = MultiHeadedAttention(heads, d_model, dropout=dropout)
 
-        self.self_attn = MultiHeadedAttention(
-            heads, d_model, dropout=dropout)
-
-        self.context_attn = MultiHeadedAttention(
-            heads, d_model, dropout=dropout)
+        self.context_attn = MultiHeadedAttention(heads, d_model, dropout=dropout)
         self.feed_forward = PositionwiseFeedForward(d_model, d_ff, dropout)
         self.layer_norm_1 = nn.LayerNorm(d_model, eps=1e-6)
         self.layer_norm_2 = nn.LayerNorm(d_model, eps=1e-6)
@@ -355,10 +389,18 @@ class TransformerDecoderLayer(nn.Module):
         mask = self._get_attn_subsequent_mask(MAX_SIZE)
         # Register self.mask as a buffer in TransformerDecoderLayer, so
         # it gets TransformerDecoderLayer's cuda behavior automatically.
-        self.register_buffer('mask', mask)
+        self.register_buffer("mask", mask)
 
-    def forward(self, inputs, memory_bank, src_pad_mask, tgt_pad_mask,
-                previous_input=None, layer_cache=None, step=None):
+    def forward(
+        self,
+        inputs,
+        memory_bank,
+        src_pad_mask,
+        tgt_pad_mask,
+        previous_input=None,
+        layer_cache=None,
+        step=None,
+    ):
         """
         Args:
             inputs (`FloatTensor`): `[batch_size x 1 x model_dim]`
@@ -374,7 +416,9 @@ class TransformerDecoderLayer(nn.Module):
             * all_input `[batch_size x current_step x model_dim]`
 
         """
-        dec_mask = torch.gt(tgt_pad_mask + self.mask[:, :tgt_pad_mask.size(1), :tgt_pad_mask.size(1)], 0)
+        dec_mask = torch.gt(
+            tgt_pad_mask + self.mask[:, : tgt_pad_mask.size(1), : tgt_pad_mask.size(1)], 0
+        )
         input_norm = self.layer_norm_1(inputs)
         all_input = input_norm
         if previous_input is not None:
@@ -387,7 +431,7 @@ class TransformerDecoderLayer(nn.Module):
             input_norm,
             mask=dec_mask,
             layer_cache=layer_cache,
-            type="self"
+            type="self",
         )
 
         query = self.drop(query) + inputs
@@ -399,7 +443,7 @@ class TransformerDecoderLayer(nn.Module):
             query_norm,
             mask=src_pad_mask,
             layer_cache=layer_cache,
-            type="context"
+            type="context",
         )
         output = self.feed_forward(self.drop(mid) + query)
 
@@ -419,7 +463,7 @@ class TransformerDecoderLayer(nn.Module):
             * subsequent_mask `[1 x size x size]`
         """
         attn_shape = (1, size, size)
-        subsequent_mask = np.triu(np.ones(attn_shape), k=1).astype('uint8')
+        subsequent_mask = np.triu(np.ones(attn_shape), k=1).astype("uint8")
         subsequent_mask = torch.from_numpy(subsequent_mask)
         return subsequent_mask
 
@@ -474,20 +518,25 @@ class MultiHeadedAttention(nn.Module):
         super(MultiHeadedAttention, self).__init__()
         self.head_count = head_count
 
-        self.linear_keys = nn.Linear(model_dim,
-                                     head_count * self.dim_per_head)
-        self.linear_values = nn.Linear(model_dim,
-                                       head_count * self.dim_per_head)
-        self.linear_query = nn.Linear(model_dim,
-                                      head_count * self.dim_per_head)
+        self.linear_keys = nn.Linear(model_dim, head_count * self.dim_per_head)
+        self.linear_values = nn.Linear(model_dim, head_count * self.dim_per_head)
+        self.linear_query = nn.Linear(model_dim, head_count * self.dim_per_head)
         self.softmax = nn.Softmax(dim=-1)
         self.dropout = nn.Dropout(dropout)
         self.use_final_linear = use_final_linear
-        if (self.use_final_linear):
+        if self.use_final_linear:
             self.final_linear = nn.Linear(model_dim, model_dim)
 
-    def forward(self, key, value, query, mask=None,
-                layer_cache=None, type=None, predefined_graph_1=None):
+    def forward(
+        self,
+        key,
+        value,
+        query,
+        mask=None,
+        layer_cache=None,
+        type=None,
+        predefined_graph_1=None,
+    ):
         """
         Compute the context vector and the attention vectors.
 
@@ -514,20 +563,24 @@ class MultiHeadedAttention(nn.Module):
 
         def shape(x):
             """  projection """
-            return x.view(batch_size, -1, head_count, dim_per_head) \
-                .transpose(1, 2)
+            return x.view(batch_size, -1, head_count, dim_per_head).transpose(1, 2)
 
         def unshape(x):
             """  compute context """
-            return x.transpose(1, 2).contiguous() \
+            return (
+                x.transpose(1, 2)
+                .contiguous()
                 .view(batch_size, -1, head_count * dim_per_head)
+            )
 
         # 1) Project key, value, and query.
         if layer_cache is not None:
             if type == "self":
-                query, key, value = self.linear_query(query), \
-                                    self.linear_keys(query), \
-                                    self.linear_values(query)
+                query, key, value = (
+                    self.linear_query(query),
+                    self.linear_keys(query),
+                    self.linear_values(query),
+                )
 
                 key = shape(key)
                 value = shape(value)
@@ -535,31 +588,29 @@ class MultiHeadedAttention(nn.Module):
                 if layer_cache is not None:
                     device = key.device
                     if layer_cache["self_keys"] is not None:
-                        key = torch.cat(
-                            (layer_cache["self_keys"].to(device), key),
-                            dim=2)
+                        key = torch.cat((layer_cache["self_keys"].to(device), key), dim=2)
                     if layer_cache["self_values"] is not None:
                         value = torch.cat(
-                            (layer_cache["self_values"].to(device), value),
-                            dim=2)
+                            (layer_cache["self_values"].to(device), value), dim=2
+                        )
                     layer_cache["self_keys"] = key
                     layer_cache["self_values"] = value
             elif type == "context":
                 query = self.linear_query(query)
                 if layer_cache is not None:
                     if layer_cache["memory_keys"] is None:
-                        key, value = self.linear_keys(key), \
-                                     self.linear_values(value)
+                        key, value = self.linear_keys(key), self.linear_values(value)
                         key = shape(key)
                         value = shape(value)
                     else:
-                        key, value = layer_cache["memory_keys"], \
-                                     layer_cache["memory_values"]
+                        key, value = (
+                            layer_cache["memory_keys"],
+                            layer_cache["memory_values"],
+                        )
                     layer_cache["memory_keys"] = key
                     layer_cache["memory_values"] = value
                 else:
-                    key, value = self.linear_keys(key), \
-                                 self.linear_values(value)
+                    key, value = self.linear_keys(key), self.linear_values(value)
                     key = shape(key)
                     value = shape(value)
         else:
@@ -586,14 +637,14 @@ class MultiHeadedAttention(nn.Module):
 
         attn = self.softmax(scores)
 
-        if (not predefined_graph_1 is None):
+        if not predefined_graph_1 is None:
             attn_masked = attn[:, -1] * predefined_graph_1
             attn_masked = attn_masked / (torch.sum(attn_masked, 2).unsqueeze(2) + 1e-9)
 
             attn = torch.cat([attn[:, :-1], attn_masked.unsqueeze(1)], 1)
 
         drop_attn = self.dropout(attn)
-        if (self.use_final_linear):
+        if self.use_final_linear:
             context = unshape(torch.matmul(drop_attn, value))
             output = self.final_linear(context)
             return output
@@ -610,6 +661,7 @@ class DecoderState(object):
 
     Modules need to implement this to utilize beam search decoding.
     """
+
     def detach(self):
         """ Need to document this """
         self.hidden = tuple([_.detach() for _ in self.hidden])
@@ -621,16 +673,15 @@ class DecoderState(object):
             sizes = e.size()
             br = sizes[1]
             if len(sizes) == 3:
-                sent_states = e.view(sizes[0], beam_size, br // beam_size,
-                                     sizes[2])[:, :, idx]
+                sent_states = e.view(sizes[0], beam_size, br // beam_size, sizes[2])[
+                    :, :, idx
+                ]
             else:
-                sent_states = e.view(sizes[0], beam_size,
-                                     br // beam_size,
-                                     sizes[2],
-                                     sizes[3])[:, :, idx]
+                sent_states = e.view(
+                    sizes[0], beam_size, br // beam_size, sizes[2], sizes[3]
+                )[:, :, idx]
 
-            sent_states.data.copy_(
-                sent_states.data.index_select(1, positions))
+            sent_states.data.copy_(sent_states.data.index_select(1, positions))
 
     def map_batch_fn(self, fn):
         raise NotImplementedError()
@@ -655,11 +706,8 @@ class TransformerDecoderState(DecoderState):
         """
         Contains attributes that need to be updated in self.beam_update().
         """
-        if (self.previous_input is not None
-                and self.previous_layer_inputs is not None):
-            return (self.previous_input,
-                    self.previous_layer_inputs,
-                    self.src)
+        if self.previous_input is not None and self.previous_layer_inputs is not None:
+            return (self.previous_input, self.previous_layer_inputs, self.src)
         else:
             return (self.src,)
 
@@ -680,10 +728,7 @@ class TransformerDecoderState(DecoderState):
         self.cache = {}
 
         for l in range(num_layers):
-            layer_cache = {
-                "memory_keys": None,
-                "memory_values": None
-            }
+            layer_cache = {"memory_keys": None, "memory_values": None}
             layer_cache["self_keys"] = None
             layer_cache["self_values"] = None
             self.cache["layer_{}".format(l)] = layer_cache
@@ -707,7 +752,11 @@ class TransformerDecoderState(DecoderState):
 
 
 def gelu(x):
-    return 0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
+    return (
+        0.5
+        * x
+        * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
+    )
 
 
 class PositionwiseFeedForward(nn.Module):
@@ -740,6 +789,7 @@ class PositionwiseFeedForward(nn.Module):
 # The following code is used to generate summaries using the
 # pre-trained weights and beam search.
 #
+
 
 def build_predictor(args, tokenizer, symbols, model, logger=None):
     # we should be able to refactor the global scorer a lot
@@ -838,9 +888,7 @@ class Translator(object):
        logger(logging.Logger): logger.
     """
 
-    def __init__(
-        self, args, model, vocab, symbols, global_scorer=None, logger=None
-    ):
+    def __init__(self, args, model, vocab, symbols, global_scorer=None, logger=None):
         self.logger = logger
         self.cuda = args.visible_gpus != "-1"
 
@@ -890,7 +938,7 @@ class Translator(object):
     def _fast_translate_batch(self, batch, max_length, min_length=0):
         """ Beam Search using the encoder inputs contained in `batch`.
         """
-        
+
         # The batch object is funny
         # Instead of just looking at the size of the arguments we encapsulate
         # a size argument.
@@ -1084,12 +1132,14 @@ def tile(x, count, dim=0):
     out_size = list(x.size())
     out_size[0] *= count
     batch = x.size(0)
-    x = x.view(batch, -1) \
-         .transpose(0, 1) \
-         .repeat(count, 1) \
-         .transpose(0, 1) \
-         .contiguous() \
-         .view(*out_size)
+    x = (
+        x.view(batch, -1)
+        .transpose(0, 1)
+        .repeat(count, 1)
+        .transpose(0, 1)
+        .contiguous()
+        .view(*out_size)
+    )
     if dim != 0:
         x = x.permute(perm).contiguous()
     return x
@@ -1101,14 +1151,14 @@ def tile(x, count, dim=0):
 
 
 def test_rouge(temp_dir, cand, ref):
-    candidates = [line.strip() for line in open(cand, encoding='utf-8')]
-    references = [line.strip() for line in open(ref, encoding='utf-8')]
+    candidates = [line.strip() for line in open(cand, encoding="utf-8")]
+    references = [line.strip() for line in open(ref, encoding="utf-8")]
     print(len(candidates))
     print(len(references))
     assert len(candidates) == len(references)
 
     cnt = len(candidates)
-    current_time = time.strftime('%Y-%m-%d-%H-%M-%S', time.localtime())
+    current_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
     tmp_dir = os.path.join(temp_dir, "rouge-tmp-{}".format(current_time))
     if not os.path.isdir(tmp_dir):
         os.mkdir(tmp_dir)
@@ -1119,17 +1169,19 @@ def test_rouge(temp_dir, cand, ref):
         for i in range(cnt):
             if len(references[i]) < 1:
                 continue
-            with open(tmp_dir + "/candidate/cand.{}.txt".format(i), "w",
-                      encoding="utf-8") as f:
+            with open(
+                tmp_dir + "/candidate/cand.{}.txt".format(i), "w", encoding="utf-8"
+            ) as f:
                 f.write(candidates[i])
-            with open(tmp_dir + "/reference/ref.{}.txt".format(i), "w",
-                      encoding="utf-8") as f:
+            with open(
+                tmp_dir + "/reference/ref.{}.txt".format(i), "w", encoding="utf-8"
+            ) as f:
                 f.write(references[i])
         r = pyrouge.Rouge155(temp_dir=temp_dir)
         r.model_dir = tmp_dir + "/reference/"
         r.system_dir = tmp_dir + "/candidate/"
-        r.model_filename_pattern = 'ref.#ID#.txt'
-        r.system_filename_pattern = r'cand.(\d+).txt'
+        r.model_filename_pattern = "ref.#ID#.txt"
+        r.system_filename_pattern = r"cand.(\d+).txt"
         rouge_results = r.convert_and_evaluate()
         print(rouge_results)
         results_dict = r.output_to_dict(rouge_results)
@@ -1147,5 +1199,5 @@ def rouge_results_to_str(results_dict):
         results_dict["rouge_l_f_score"] * 100,
         results_dict["rouge_1_recall"] * 100,
         results_dict["rouge_2_recall"] * 100,
-        results_dict["rouge_l_recall"] * 100
+        results_dict["rouge_l_recall"] * 100,
     )

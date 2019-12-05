@@ -10,8 +10,13 @@ from torch.utils.data import Dataset
 # ------------
 
 
-class CNNDailyMailDataset(Dataset):
+class SummarizationDataset(Dataset):
     """ Abstracts the dataset used to train seq2seq models.
+
+    The class will process the documents that are located in the specified
+    folder. The preprocessing will work on any document that is reasonably
+    formatted. On the CNN/DailyMail dataset it will extract both the story
+    and the summary.
 
     CNN/Daily News:
 

@@ -132,7 +132,7 @@ def convert_bertabs_checkpoints(path_to_checkpoints, dump_path):
     # The model has been saved with torch.save(model) and this is bound to the exact
     # directory structure. We save the state_dict instead.
     logging.info("saving the model's state dictionary")
-    torch.save(new_model.state_dict(), "bert-ext-abs.pt")
+    torch.save(new_model.state_dict(), "bertabs-finetuned-extractive-and-abstractive-summarization-pytorch_model.pt")
 
 
 if __name__ == "__main__":
