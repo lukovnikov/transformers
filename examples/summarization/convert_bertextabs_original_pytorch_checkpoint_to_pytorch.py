@@ -12,12 +12,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" Convert BertExtAbs's checkpoints """
+""" Convert BertExtAbs's checkpoints
+
+The file currently does not do much as we ended up copying the exact model
+structure, but I leave it here in case we ever want to refactor the model.
+"""
 
 import argparse
 from collections import namedtuple
 import logging
-import pdb
 import torch
 
 from models.model_builder import AbsSummarizer  # The authors' implementation
@@ -107,7 +110,7 @@ def convert_bertabs_checkpoints(path_to_checkpoints, dump_path):
     mask_src = encoder_attention_mask = None
     mask_tgt = decoder_attention_mask = None
     mask_cls = None
-    
+
     # The original model does not apply the geneator layer immediatly but rather in
     # the beam search (where it combines softmax + linear layer). Since we already
     # apply the softmax in our generation process we only apply the linear layer here.
@@ -132,7 +135,7 @@ def convert_bertabs_checkpoints(path_to_checkpoints, dump_path):
     # The model has been saved with torch.save(model) and this is bound to the exact
     # directory structure. We save the state_dict instead.
     logging.info("saving the model's state dictionary")
-    torch.save(new_model.state_dict(), "bertabs-finetuned-extractive-and-abstractive-summarization-pytorch_model.pt")
+    torch.save(new_model.state_dict(), "bertabs-finetuned-cnndm-extractive-abstractive-summarization-pytorch_model.bin")
 
 
 if __name__ == "__main__":
