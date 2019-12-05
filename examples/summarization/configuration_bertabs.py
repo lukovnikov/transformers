@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 BERTABS_FINETUNED_CONFIG_MAP = {
-    "bert-ext-abs": "https://s3.amazonaws.com/models.huggingface.co/bertabs/bertabs-finetuned-abstractive-summarization.json"
+    "bertabs-finetuned-cnndm-ext-abs": "https://s3.amazonaws.com/models.huggingface.co/bert/remi/bertabs-finetuned-cnndm-extractive-abstractive-summarization-config.json"
 }
 
 
