@@ -1194,3 +1194,57 @@ def rouge_results_to_str(results_dict):
         results_dict["rouge_2_recall"] * 100,
         results_dict["rouge_l_recall"] * 100,
     )
+
+
+class BertSumOptimizer(object):
+    """ Specific optimizer for BertSum.
+
+    As described in [1], the authors fine-tune BertSum for abstractive
+    summarization using two Adam Optimizers with different warm-up steps and
+    learning rate. They also use a custom learning rate scheduler.
+
+    [1] Liu, Yang, and Mirella Lapata. "Text summarization with pretrained encoders."
+        arXiv preprint arXiv:1908.08345 (2019).
+    """
+
+    def __init__(self, model, lr, warmup_steps, beta_1=0.99, beta_2=0.999, eps=1e-8):
+        self.encoder = model.encoder
+        self.decoder = model.decoder
+        self.lr = lr
+        self.warmup_steps = warmup_steps
+
+        self.optimizers = {
+            "encoder": torch.optim.Adam(
+                model.encoder.parameters(),
+                lr=lr["encoder"],
+                betas=(beta_1, beta_2),
+                eps=eps,
+            ),
+            "decoder": torch.optim.Adam(
+                model.decoder.parameters(),
+                lr=lr["decoder"],
+                betas=(beta_1, beta_2),
+                eps=eps,
+            ),
+        }
+
+        self._step = 0
+        self.current_learning_rates = {}
+
+    def _update_rate(self, stack):
+        return self.lr[stack] * min(
+            self._step ** (-0.5), self._step * self.warmup_steps[stack] ** (-1.5)
+        )
+
+    def zero_grad(self):
+        self.optimizer_decoder.zero_grad()
+        self.optimizer_encoder.zero_grad()
+
+    def step(self):
+        self._step += 1
+        for stack, optimizer in self.optimizers.items():
+            new_rate = self._update_rate(stack)
+            for param_group in optimizer.param_groups:
+                param_group["lr"] = new_rate
+            optimizer.step()
+            self.current_learning_rates[stack] = new_rate
