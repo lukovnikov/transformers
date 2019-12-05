@@ -32,17 +32,27 @@ from torch.nn.init import xavier_uniform_
 
 from transformers import BertModel, BertConfig, PreTrainedModel
 
+from configuration_bertabs import BertAbsConfig
+
 
 MAX_SIZE = 5000
 
 BERTABS_FINETUNED_MODEL_MAP = {
-    "bert-ext-abs": "https://s3.amazonaws.com/models.huggingface.co/bertabs/bertabs-finetuned-abstractive-summarization-pytorch_model.bin"
+    "bertabs-finetuned-cnndm": "https://s3.amazonaws.com/models.huggingface.co/bert/remi/bertabs-finetuned-cnndm-extractive-abstractive-summarization-pytorch_model.bin",
+    "bertabs-finetuned-xsum": "https://s3.amazonaws.com/models.huggingface.co/bert/remi/bertabs-finetuned-xsum-extractive-abstractive-summarization-pytorch_model.bin"
 }
 
 
-class BertAbsSummarizer(PreTrainedModel):
+class BertAbsPreTrainedModel(PreTrainedModel):
+    config_class = BertAbsConfig
+    pretrained_model_archive_map = BERTABS_FINETUNED_MODEL_MAP
+    load_tf_weights = False
+    base_model_prefix = "bert"
+
+
+class BertAbs(BertAbsPreTrainedModel):
     def __init__(self, args, checkpoint=None, bert_extractive_checkpoint=None):
-        super(BertAbsSummarizer, self).__init__(args)
+        super(BertAbs, self).__init__(args)
         self.args = args
         self.bert = Bert(args.large, args.temp_dir, args.finetune_bert)
 
