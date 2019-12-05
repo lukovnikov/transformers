@@ -19,7 +19,6 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-from collections import namedtuple
 import copy
 import math
 import shutil
@@ -31,7 +30,7 @@ import torch
 from torch import nn
 from torch.nn.init import xavier_uniform_
 
-from transformers import BertModel, BertConfig
+from transformers import BertModel, BertConfig, PreTrainedModel
 
 
 MAX_SIZE = 5000
@@ -41,9 +40,9 @@ BERTABS_FINETUNED_MODEL_MAP = {
 }
 
 
-class BertAbsSummarizer(nn.Module):
+class BertAbsSummarizer(PreTrainedModel):
     def __init__(self, args, device, checkpoint=None, bert_extractive_checkpoint=None):
-        super(BertAbsSummarizer, self).__init__()
+        super(BertAbsSummarizer, self).__init__(args)
         self.args = args
         self.device = device
         self.bert = Bert(args.large, args.temp_dir, args.finetune_bert)
@@ -143,10 +142,6 @@ class BertAbsSummarizer(nn.Module):
                 self.bert.model.embeddings.word_embeddings.weight
             )
             self.decoder.embeddings = tgt_embeddings
-
-    @classmethod
-    def from_pretrained(cls, checkpoints, config, device):
-        return cls(config, device, checkpoints)
 
     def forward(
         self,

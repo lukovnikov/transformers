@@ -118,7 +118,8 @@ def save_summaries(summaries, path, original_document_name):
 def get_pretrained_BertAbs_model(path, device):
     config = BertAbsConfig()
     checkpoints = torch.load(path, lambda storage, loc: storage)
-    bertabs = BertAbsSummarizer.from_pretrained(checkpoints, config, device)
+    bertabs = BertAbsSummarizer(config, device, checkpoints)
+    bertabs.to(device)
     bertabs.eval()
 
     return bertabs
