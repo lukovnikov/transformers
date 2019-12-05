@@ -10,8 +10,7 @@ from tqdm import tqdm
 
 from transformers import BertTokenizer
 
-from modeling_bertabs import BertAbsSummarizer, build_predictor
-from configuration_bertabs import BertAbsConfig
+from modeling_bertabs import BertAbs, build_predictor
 
 from utils_summarization import (
     SummarizationDataset,
@@ -30,7 +29,9 @@ Batch = namedtuple("Batch", ["document_names", "batch_size", "src", "segs", "mas
 
 def evaluate(args):
     tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", do_lower_case=True)
-    model = get_pretrained_BertAbs_model("bert-ext-abs.pt", device=args.device)
+    model = bertabs = BertAbs.from_pretrained('bertabs-finetuned-cnndm')
+    bertabs.to(args.device)
+    bertabs.eval()
 
     symbols = {
         "BOS": tokenizer.vocab["[unused0]"],
@@ -108,21 +109,6 @@ def save_summaries(summaries, path, original_document_name):
         file_path = os.path.join(path, name)
         with open(file_path, "w") as output:
             output.write(summary)
-
-
-#
-# BUILD the model
-#
-
-
-def get_pretrained_BertAbs_model(path, device):
-    config = BertAbsConfig()
-    checkpoints = torch.load(path, lambda storage, loc: storage)
-    bertabs = BertAbsSummarizer(config, checkpoints)
-    bertabs.to(device)
-    bertabs.eval()
-
-    return bertabs
 
 
 #
