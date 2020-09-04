@@ -183,7 +183,10 @@ class EncoderLayer(nn.Module):
         self.embed_dim = config.d_model
         self.output_attentions = config.output_attentions
         self.self_attn = SelfAttention(
-            self.embed_dim, config.encoder_attention_heads, dropout=config.attention_dropout,
+            self.embed_dim,
+            config.encoder_attention_heads,
+            dropout=config.attention_dropout,
+            relative_position=config.relative_position,
         )
         self.normalize_before = config.normalize_before
         self.self_attn_layer_norm = LayerNorm(self.embed_dim)
@@ -253,6 +256,8 @@ class BartEncoder(nn.Module):
         self.max_source_positions = config.max_position_embeddings
 
         self.embed_tokens = embed_tokens
+        if config.relative_position:
+            self.embed_positions = None
         if config.static_position_embeddings:
             self.embed_positions = SinusoidalPositionalEmbedding(
                 config.max_position_embeddings, embed_dim, self.padding_idx
@@ -289,8 +294,12 @@ class BartEncoder(nn.Module):
             attention_mask = invert_mask(attention_mask)
 
         inputs_embeds = self.embed_tokens(input_ids) * self.embed_scale
-        embed_pos = self.embed_positions(input_ids)
-        x = inputs_embeds + embed_pos
+
+        if self.embed_positions is not None:
+            embed_pos = self.embed_positions(input_ids)
+            x = inputs_embeds + embed_pos
+        else:
+            x = inputs_embeds
         x = self.layernorm_embedding(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
 
@@ -329,7 +338,10 @@ class DecoderLayer(nn.Module):
         self.embed_dim = config.d_model
         self.output_attentions = config.output_attentions
         self.self_attn = SelfAttention(
-            embed_dim=self.embed_dim, num_heads=config.decoder_attention_heads, dropout=config.attention_dropout,
+            embed_dim=self.embed_dim,
+            num_heads=config.decoder_attention_heads,
+            dropout=config.attention_dropout,
+            relative_position=config.relative_position,
         )
         self.dropout = config.dropout
         self.activation_fn = ACT2FN[config.activation_function]
@@ -431,7 +443,9 @@ class BartDecoder(nn.Module):
         self.max_target_positions = config.max_position_embeddings
         self.embed_scale = math.sqrt(config.d_model) if config.scale_embedding else 1.0
         self.embed_tokens = embed_tokens
-        if config.static_position_embeddings:
+        if config.relative_position:
+            self.embed_positions = None
+        elif config.static_position_embeddings:
             self.embed_positions = SinusoidalPositionalEmbedding(
                 config.max_position_embeddings, config.d_model, config.pad_token_id
             )
@@ -479,15 +493,19 @@ class BartDecoder(nn.Module):
             encoder_padding_mask = invert_mask(encoder_padding_mask)
 
         # embed positions
-        positions = self.embed_positions(input_ids, use_cache=use_cache)
+        if self.embed_positions is not None:
+            positions = self.embed_positions(input_ids, use_cache=use_cache)
 
         if use_cache:
             input_ids = input_ids[:, -1:]
-            positions = positions[:, -1:]  # happens after we embed them
+            if self.embed_positions is not None:
+                positions = positions[:, -1:]  # happens after we embed them
             # assert input_ids.ne(self.padding_idx).any()
 
         x = self.embed_tokens(input_ids) * self.embed_scale
-        x += positions
+
+        if self.embed_positions is not None:
+            x += positions
         x = self.layernorm_embedding(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
 
@@ -555,6 +573,8 @@ class SelfAttention(nn.Module):
         dropout=0.0,
         bias=True,
         encoder_decoder_attention=False,  # otherwise self_attention
+        relative_position=False,
+        relative_position_range=16,
     ):
         super().__init__()
         self.embed_dim = embed_dim
@@ -571,8 +591,29 @@ class SelfAttention(nn.Module):
         self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
         self.cache_key = "encoder_decoder" if self.encoder_decoder_attention else "self"
 
+        self.relative_position = relative_position
+        if relative_position:
+            self.relative_position_emb = torch.nn.Embedding(relative_position_range * 2 + 1, self.embed_dim, padding_idx=None)
+            self.relative_position_range = relative_position_range
+
     def _shape(self, tensor, dim_0, bsz):
         return tensor.contiguous().view(dim_0, bsz * self.num_heads, self.head_dim).transpose(0, 1)
+
+    def _compute_relative_position_weights(self, q:torch.Tensor, batsize, klen:int):   # (batsize*numheads, seqlen, hdim)
+        relpos_embs = self.relative_position_emb.weight # (numpos, hdim)
+        relpos_embs = relpos_embs.view(relpos_embs.size(0), self.num_heads, -1)
+        qlen = q.size(1)
+        _q = q.view(batsize, self.num_heads, qlen, -1)
+        w = torch.einsum("phd,bhsd->bhsp", relpos_embs, _q)
+        # (batsize, numheads, seqlen, numpos)  -- weight for every head
+        relids = torch.arange(klen-qlen, klen)[:, None] - torch.arange(0, klen)[None, :]
+        # (qlen, klen)  or (s, z)
+        relids = relids.clamp(- self.relative_position_range, + self.relative_position_range)
+        relids = relids + self.relative_position_range
+        outw = torch.gather(w, 3, relids[None, None, :, :].repeat(w.size(0), w.size(1), 1, 1))
+        # (batsize, numheads, seqlen, klen)
+        outw = outw.view(-1, outw.size(2), outw.size(3))
+        return outw
 
     def forward(
         self,
@@ -611,6 +652,7 @@ class SelfAttention(nn.Module):
             v = self.v_proj(query)
 
         q = self._shape(q, tgt_len, bsz)
+
         if k is not None:
             k = self._shape(k, -1, bsz)
         if v is not None:
@@ -630,6 +672,11 @@ class SelfAttention(nn.Module):
         src_len = k.size(1)
         attn_weights = torch.bmm(q, k.transpose(1, 2))
         assert attn_weights.size() == (bsz * self.num_heads, tgt_len, src_len)
+
+        if self.relative_position:
+            klen = k.size(1)
+            relpos_weights = self._compute_relative_position_weights(q, bsz, klen)
+            attn_weights = attn_weights + relpos_weights
 
         if attn_mask is not None:
             attn_weights = attn_weights.view(bsz, self.num_heads, tgt_len, src_len) + attn_mask
