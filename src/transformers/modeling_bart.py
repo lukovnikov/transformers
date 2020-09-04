@@ -607,8 +607,9 @@ class SelfAttention(nn.Module):
         w = torch.einsum("phd,bhsd->bhsp", relpos_embs, _q)
         # (batsize, numheads, seqlen, numpos)  -- weight for every head
         relids = torch.arange(klen-qlen, klen)[:, None] - torch.arange(0, klen)[None, :]
+        relids = relids.to(q.device)
         # (qlen, klen)  or (s, z)
-        relids = relids.clamp(- self.relative_position_range, + self.relative_position_range)
+        relids = relids.clamp(-self.relative_position_range, +self.relative_position_range)
         relids = relids + self.relative_position_range
         outw = torch.gather(w, 3, relids[None, None, :, :].repeat(w.size(0), w.size(1), 1, 1))
         # (batsize, numheads, seqlen, klen)
