@@ -455,7 +455,7 @@ class DeeBertForSequenceClassification(BertPreTrainedModel):
 
             out_logits = cum_logits
 
-            outputs = (loss + earlyloss, earlyloss, out_logits, all_entropies, times) + outputs
+            outputs = (loss + earlyloss, earlyloss, all_logits, cum_logits, all_entropies, times) + outputs
         else:
             # assert we're in deployment mode
             outputs = (all_logits[-1], exit_layer, all_entropies, times) + outputs

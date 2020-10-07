@@ -284,6 +284,8 @@ def evaluate(args, model, tokenizer, prefix="", output_layer=-1):
         eval_loss = 0.0
         nb_eval_steps = 0
         preds = None
+        cumlogs = None
+        exitlogs = None
         entrs = None
         times = None
         out_label_ids = None
@@ -304,8 +306,10 @@ def evaluate(args, model, tokenizer, prefix="", output_layer=-1):
                 outputs = model(**inputs)
                 # if eval_highway:
                 #     exit_layer_counter[outputs[-1]] += 1
-                tmp_eval_loss, extra_eval_loss, logits, entropies, layertimes = outputs[:5]
-                logits = torch.stack(logits, 1)
+                tmp_eval_loss, extra_eval_loss, all_logits, cum_logits, entropies, layertimes = outputs[:6]
+                cum_logits = torch.stack(cum_logits, 1)
+                all_logits = torch.stack(all_logits, 1)
+                logits = cum_logits
                 entropies = [entr.detach().cpu().item() for entr in entropies]
                 entropies = [list(entropies) for _ in range(logits.size(0))]
                 layertimes = [list(layertimes) for _ in range(logits.size(0))]
@@ -316,11 +320,15 @@ def evaluate(args, model, tokenizer, prefix="", output_layer=-1):
                 entrs = np.asarray(entropies)
                 times = np.asarray(layertimes)
                 out_label_ids = inputs["labels"].detach().cpu().numpy()
+                exitlogs = all_logits.detach().cpu().numpy()
+                cumlogs = cum_logits.detach().cpu().numpy()
             else:
                 preds = np.append(preds, logits.detach().cpu().numpy(), axis=0)
                 entrs = np.append(entrs, np.asarray(entropies), axis=0)
                 times = np.append(times, np.asarray(layertimes), axis=0)
                 out_label_ids = np.append(out_label_ids, inputs["labels"].detach().cpu().numpy(), axis=0)
+                exitlogs = np.append(exitlogs, all_logits.detach().cpu().numpy(), axis=0)
+                cumlogs = np.append(cumlogs, cum_logits.detach().cpu().numpy(), axis=0)
         eval_time = time.time() - st
         logger.info("Eval time: {}".format(eval_time))
 
@@ -336,6 +344,8 @@ def evaluate(args, model, tokenizer, prefix="", output_layer=-1):
             "labels": out_label_ids,
             "entropies": entrs,
             "times": times,
+            "cumulative_logits": cumlogs,
+            "exit_logits": exitlogs,
         }
         for i in range(preds.shape[1]):
             layerpreds = preds[:, i]
@@ -380,9 +390,8 @@ def evaluate(args, model, tokenizer, prefix="", output_layer=-1):
 
             logger.info("***** Detailed eval results {} *****".format(prefix))
             output_eval_file = os.path.join(eval_output_dir, prefix, "detailed_eval_results.npz")
-            with open(output_eval_file, "w") as writer:
-                np.savez(writer, **detailedresults)
-                logger.info("detailed results saved")
+            np.savez(output_eval_file, **detailedresults)
+            logger.info("detailed results saved")
         except Exception as e:
             traceback.print_exc()
             print("Exception occurred. Nothing saved.")
