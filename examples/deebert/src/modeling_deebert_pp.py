@@ -471,7 +471,7 @@ class DeeBertForSequenceClassification(BertPreTrainedModel):
                     loss_fct = MSELoss()
                     exit_loss = loss_fct(exit_logit, labels)
                 else:
-                    loss_fct = CrossEntropyLoss()
+                    loss_fct = SmoothedCELoss(smoothing=self.smoothing)
                     exit_loss = loss_fct(exit_logit, labels)
                 exit_losses.append(exit_loss)
 
