@@ -377,27 +377,26 @@ def evaluate(args, model, tokenizer, prefix="", output_layer=-1):
         #         np.save(save_fname, np.array([exit_layer_counter, eval_time, actual_cost / full_cost, print_result]))
         #         logger.info("Entropy={}\tResult={:.2f}".format(args.early_exit_entropy, 100 * print_result))
 
-        print("***** Eval results {} *****".format(prefix))
+        logger.info("***** Eval results {} *****".format(prefix))
         for key in sorted(result.keys()):
-            print("  %s = %s", key, str(result[key]))
-        output_eval_file = os.path.join(eval_output_dir, prefix, "eval_results.json")
-        try:
-            print(f"saving eval results in '{output_eval_file}'")
-            with open(output_eval_file, "w") as writer:
-                json.dump(result, writer, indent=3)
-                # for key in sorted(result.keys()):
-                #     writer.write("%s = %s\n" % (key, str(result[key])))
-                print("eval results saved")
-
-            print("***** Detailed eval results {} *****".format(prefix))
-            output_eval_file = os.path.join(eval_output_dir, prefix, "detailed_eval_results.npz")
-            np.savez(output_eval_file, **detailedresults)
-            print("detailed results saved")
-        except Exception as e:
-            traceback.print_exc()
-            print("Exception occurred. Nothing saved.")
-
-    return results
+            logger.info("  %s = %s", key, str(result[key]))
+    #     output_eval_file = os.path.join(eval_output_dir, prefix, "eval_results.txt")
+    #     try:
+    #         logger.info(f"saving eval results in '{output_eval_file}'")
+    #         with open(output_eval_file, "w") as writer:
+    #             for key in sorted(result.keys()):
+    #                 writer.write("%s = %s\n" % (key, str(result[key])))
+    #             logger.info("eval results saved")
+    #
+    #         logger.info("***** Detailed eval results {} *****".format(prefix))
+    #         output_eval_file = os.path.join(eval_output_dir, prefix, "detailed_eval_results.npz")
+    #         np.savez(output_eval_file, **detailedresults)
+    #         logger.info("detailed results saved")
+    #     except Exception as e:
+    #         traceback.print_exc()
+    #         print("Exception occurred. Nothing saved.")
+    #
+    # return results
 
 
 def load_and_cache_examples(args, task, tokenizer, evaluate=False):
