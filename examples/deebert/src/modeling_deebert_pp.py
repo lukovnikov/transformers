@@ -1,3 +1,5 @@
+import time
+import numpy as np
 import torch
 from torch import nn
 from torch.nn import CrossEntropyLoss, MSELoss
@@ -15,10 +17,13 @@ from transformers.modeling_bert import (
 
 def entropy(x):
     """Calculate entropy of a pre-softmax logit Tensor"""
-    exp_x = torch.exp(x)
-    A = torch.sum(exp_x, dim=1)  # sum of exp(x_i)
-    B = torch.sum(x * exp_x, dim=1)  # sum of x_i * exp(x_i)
-    return torch.log(A) - B / A
+    x_sm = torch.softmax(x, -1)
+    # A = torch.sum(exp_x, dim=1)  # sum of exp(x_i)
+    # B = torch.sum(x * exp_x, dim=1)  # sum of x_i * exp(x_i)
+    ret = x_sm * torch.log(x_sm)
+    ret = - ret.sum(-1)
+    # return torch.log(A) - B / A
+    return ret
 
 
 class DeeBertEncoder(nn.Module):
@@ -27,9 +32,10 @@ class DeeBertEncoder(nn.Module):
         self.output_attentions = config.output_attentions
         self.output_hidden_states = config.output_hidden_states
         self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
-        self.highway = nn.ModuleList([BertHighway(config) for _ in range(config.num_hidden_layers)])
+        self.early_exits = nn.ModuleList([BertExit(config) for _ in range(config.num_hidden_layers)])
 
         self.early_exit_entropy = [-1 for _ in range(config.num_hidden_layers)]
+        self.deploymode = False
 
     def set_early_exit_entropy(self, x):
         if (type(x) is float) or (type(x) is int):
@@ -38,11 +44,11 @@ class DeeBertEncoder(nn.Module):
         else:
             self.early_exit_entropy = x
 
-    def init_highway_pooler(self, pooler):
-        loaded_model = pooler.state_dict()
-        for highway in self.highway:
-            for name, param in highway.pooler.state_dict().items():
-                param.copy_(loaded_model[name])
+    # def init_highway_pooler(self, pooler):
+    #     loaded_model = pooler.state_dict()
+    #     for early_exit in self.early_exits:
+    #         for name, param in early_exit.pooler.state_dict().items():
+    #             param.copy_(loaded_model[name])
 
     def forward(
         self,
@@ -54,7 +60,10 @@ class DeeBertEncoder(nn.Module):
     ):
         all_hidden_states = ()
         all_attentions = ()
-        all_highway_exits = ()
+        all_logits = ()
+        cum_logits = ()
+        all_entropies = ()
+        tocs = ()
         for i, layer_module in enumerate(self.layer):
             if self.output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
@@ -73,20 +82,24 @@ class DeeBertEncoder(nn.Module):
             if self.output_attentions:
                 current_outputs = current_outputs + (all_attentions,)
 
-            highway_exit = self.highway[i](current_outputs)
+            early_exit = self.early_exits[i](current_outputs)
+            exit_logits = early_exit[0]
             # logits, pooled_output
-
-            if not self.training:
-                highway_logits = highway_exit[0]
-                highway_entropy = entropy(highway_logits)
-                highway_exit = highway_exit + (highway_entropy,)  # logits, hidden_states(?), entropy
-                all_highway_exits = all_highway_exits + (highway_exit,)
-
-                if highway_entropy < self.early_exit_entropy[i]:
-                    new_output = (highway_logits,) + current_outputs[1:] + (all_highway_exits,)
-                    raise HighwayException(new_output, i + 1)
+            all_logits = all_logits + (exit_logits,)
+            if len(cum_logits) == 0:
+                cum_logit = exit_logits
             else:
-                all_highway_exits = all_highway_exits + (highway_exit,)
+                cum_logit = cum_logits[-1] + exit_logits
+            cum_logits = cum_logits + (cum_logit,)
+
+            exit_entropy = entropy(cum_logits[-1]).mean()
+            all_entropies = all_entropies + (exit_entropy,)
+
+            tocs = tocs + (time.perf_counter(),)
+
+            if self.deploymode:
+                if exit_entropy < self.early_exit_entropy[i]:
+                    break
 
         # Add last layer
         if self.output_hidden_states:
@@ -98,7 +111,7 @@ class DeeBertEncoder(nn.Module):
         if self.output_attentions:
             outputs = outputs + (all_attentions,)
 
-        outputs = outputs + (all_highway_exits,)
+        outputs = (all_logits, cum_logits, all_entropies, tocs) + outputs
         return outputs  # last-layer hidden state, (all hidden states), (all attentions), all highway exits
 
 
@@ -117,8 +130,9 @@ class DeeBertModel(BertPreTrainedModel):
 
         self.init_weights()
 
-    def init_highway_pooler(self):
-        self.encoder.init_highway_pooler(self.pooler)
+    # def init_highway_pooler(self):
+    #     # pass
+    #     self.encoder.init_highway_pooler(self.pooler)
 
     def get_input_embeddings(self):
         return self.embeddings.word_embeddings
@@ -175,6 +189,7 @@ class DeeBertModel(BertPreTrainedModel):
                 Tuple of each early exit's results (total length: number of layers)
                 Each tuple is again, a tuple of length 2 - the first entry is logits and the second entry is hidden states.
         """
+        tic = time.perf_counter()
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
         elif input_ids is not None:
@@ -226,22 +241,21 @@ class DeeBertModel(BertPreTrainedModel):
             encoder_hidden_states=encoder_hidden_states,
             encoder_attention_mask=encoder_extended_attention_mask,
         )
-        sequence_output = encoder_outputs[0]
-        pooled_output = self.pooler(sequence_output)
+        # sequence_output = encoder_outputs[0]
+        # pooled_output = self.pooler(sequence_output)
 
-        outputs = (sequence_output, pooled_output,) + encoder_outputs[
-            1:
-        ]  # add hidden_states and attentions if they are here
-        return outputs  # sequence_output, pooled_output, (hidden_states), (attentions), highway exits
+        all_logits, cum_logits, all_entropies, tocs = encoder_outputs[:4]
+        encoder_outputs = encoder_outputs[4:]
+
+        time_at_exit = [toc - tic for toc in tocs]
+
+        # outputs = (sequence_output, pooled_output,) + encoder_outputs[1:-1]  # add hidden_states and attentions if they are here
+        outputs = (all_logits, cum_logits, all_entropies, time_at_exit) + encoder_outputs
+        return outputs
+        # return outputs  # sequence_output, pooled_output, (hidden_states), (attentions), highway exits
 
 
-class HighwayException(Exception):
-    def __init__(self, message, exit_layer):
-        self.message = message
-        self.exit_layer = exit_layer  # start from 1!
-
-
-class BertHighway(nn.Module):
+class BertExit(nn.Module):
     """A module to provide a shortcut
     from (the output of one non-final BertLayer in BertEncoder) to (cross-entropy computation in BertForSequenceClassification)
     """
@@ -271,13 +285,76 @@ class BertHighway(nn.Module):
         return logits, pooled_output
 
 
+class SmoothedCELoss(torch.nn.Module):
+    """ CrossEntropyLoss with label smoothing. """
+    def __init__(self, reduction="mean", ignore_index=-100, smoothing=0., mode="logits", weight=None, **kw):
+        super(SmoothedCELoss, self).__init__(**kw)
+        self.reduction, self.ignore_indices, self.smoothing = reduction, ignore_index, smoothing
+        self.mode = mode        # "logits", "probs", "logprobs"
+        self.kl = torch.nn.KLDivLoss(reduction="none")
+        self.sm = torch.nn.LogSoftmax(-1) if self.mode == "logits" else None
+        if weight is not None:
+            self.register_buffer("weight", weight)
+        else:
+            self.weight = None
+
+    @staticmethod
+    def get_ignore_mask(gold, ignore_indices):
+        if ignore_indices is not None and not isinstance(ignore_indices, (list, tuple, set)):
+            ignore_indices = [ignore_indices]
+        mask = None     # (batsize,)
+        if ignore_indices is not None:
+            for ignore in ignore_indices:
+                mask_i = (gold != ignore)   # zero for ignored ones
+                if mask is None:
+                    mask = mask_i
+                else:
+                    mask = mask & mask_i
+        if mask is None:
+            mask = torch.ones_like(gold).byte()
+        return mask
+
+    def forward(self, probs, gold):
+        """
+        :param probs:   (batsize, ..., vocsize) logits
+        :param gold:    (batsize, ..., ) int ids of correct class
+        :return:
+        """
+        _prob_mask_crit = -np.infty if self.mode in "logits logprobs".split() else 0
+        lsv = self.smoothing   # get value of label smoothing hyperparam
+        assert(lsv >= 0 and lsv <= 1)
+        prob_mask = (probs > _prob_mask_crit).float()     # (batsize, ..., vocsize) where probs are > 0, reverse engineering a -infty mask applied outside
+        prob_mask_weights = lsv / prob_mask.sum(-1, keepdim=True)
+        _gold = torch.ones_like(probs) * prob_mask_weights * prob_mask
+        _gold.scatter_(-1, gold.unsqueeze(-1), (1 - lsv) + prob_mask_weights)   # (batsize, ..., vocsize) probs
+        assert(torch.allclose(_gold.sum(-1), torch.ones_like(gold).float()) is True)
+
+        logprobs = self.sm(probs) if self.mode == "logits" else (probs if self.mode == "logprobs" else torch.log(probs))
+        kl_divs = self.kl(logprobs, _gold.detach())
+        # kl_divs = inf2zero(kl_divs)
+        kl_div = kl_divs.sum(-1)        # (batsize, ...) kl div per element
+
+        if self.weight is not None:
+            kl_div = kl_div * self.weight[gold]
+
+        mask = self.get_ignore_mask(gold, self.ignore_indices).float()
+        kl_div = kl_div * mask
+        ret = kl_div.sum()
+        if self.reduction in ["elementwise_mean", "mean"]:
+            total = mask.sum()
+            ret = ret / total
+        elif self.reduction == "none":
+            ret = kl_div
+        return ret
+
+
 @add_start_docstrings(
     """Bert Model (with early exiting - DeeBERT) with a classifier on top,
     also takes care of multi-layer training. """,
     BERT_START_DOCSTRING,
 )
 class DeeBertForSequenceClassification(BertPreTrainedModel):
-    def __init__(self, config):
+    def __init__(self, config, smoothing=0.):
         super().__init__(config)
         self.num_labels = config.num_labels
         self.num_layers = config.num_hidden_layers
@@ -287,6 +364,7 @@ class DeeBertForSequenceClassification(BertPreTrainedModel):
         self.classifier = nn.Linear(config.hidden_size, self.config.num_labels)
 
         self.init_weights()
+        self.smoothing = smoothing
 
     @add_start_docstrings_to_callable(BERT_INPUTS_DOCSTRING)
     def forward(
@@ -299,7 +377,7 @@ class DeeBertForSequenceClassification(BertPreTrainedModel):
         inputs_embeds=None,
         labels=None,
         output_layer=-1,
-        train_highway=False,
+        train_exit=0.,
     ):
         r"""
             labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
@@ -330,67 +408,55 @@ class DeeBertForSequenceClassification(BertPreTrainedModel):
                 Each tuple is again, a tuple of length 2 - the first entry is logits and the second entry is hidden states.
         """
 
-        exit_layer = self.num_layers
-        try:
-            outputs = self.bert(
-                input_ids,
-                attention_mask=attention_mask,
-                token_type_ids=token_type_ids,
-                position_ids=position_ids,
-                head_mask=head_mask,
-                inputs_embeds=inputs_embeds,
-            )
-            # sequence_output, pooled_output, (hidden_states), (attentions), highway exits
+        outputs = self.bert(
+            input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            head_mask=head_mask,
+            inputs_embeds=inputs_embeds,
+        )
+        # sequence_output, pooled_output, (hidden_states), (attentions), highway exits
 
-            pooled_output = outputs[1]
+        # pooled_output = outputs[1]
 
-            pooled_output = self.dropout(pooled_output)
-            logits = self.classifier(pooled_output)
-            outputs = (logits,) + outputs[2:]  # add hidden states and attention if they are here
-        except HighwayException as e:
-            outputs = e.message
-            exit_layer = e.exit_layer
-            logits = outputs[0]
+        # pooled_output = self.dropout(pooled_output)
+        # logits = self.classifier(pooled_output)
+        all_logits, cum_logits, all_entropies, times = outputs[:4]
+        outputs = outputs[4:]
+        # outputs = (logits,) + outputs  # add hidden states and attention if they are here
+        exit_layer = len(times)
 
-        if not self.training:
-            original_entropy = entropy(logits)
-            highway_entropy = []
-            highway_logits_all = []
         if labels is not None:
-            if self.num_labels == 1:
-                #  We are doing regression
-                loss_fct = MSELoss()
-                loss = loss_fct(logits.view(-1), labels.view(-1))
-            else:
-                loss_fct = CrossEntropyLoss()
-                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-
-            # work with highway exits
-            highway_losses = []
-            for highway_exit in outputs[-1]:
-                highway_logits = highway_exit[0]
-                if not self.training:
-                    highway_logits_all.append(highway_logits)
-                    highway_entropy.append(highway_exit[2])
+            exit_losses = []
+            # exit_accs = []
+            for exit_logit in all_logits:
                 if self.num_labels == 1:
                     #  We are doing regression
                     loss_fct = MSELoss()
-                    highway_loss = loss_fct(highway_logits.view(-1), labels.view(-1))
+                    exit_loss = loss_fct(exit_logit, labels)
                 else:
                     loss_fct = CrossEntropyLoss()
-                    highway_loss = loss_fct(highway_logits.view(-1, self.num_labels), labels.view(-1))
-                highway_losses.append(highway_loss)
+                    exit_loss = loss_fct(exit_logit, labels)
+                exit_losses.append(exit_loss)
 
-            if train_highway:
-                outputs = (sum(highway_losses[:-1]),) + outputs
-                # exclude the final highway, of course
+            if self.num_labels == 1:
+                #  We are doing regression
+                loss_fct = MSELoss()
+                cum_loss = loss_fct(cum_logits[-1], labels)
             else:
-                outputs = (loss,) + outputs
-        if not self.training:
-            outputs = outputs + ((original_entropy, highway_entropy), exit_layer)
-            if output_layer >= 0:
-                outputs = (
-                    (outputs[0],) + (highway_logits_all[output_layer],) + outputs[2:]
-                )  # use the highway of the last layer
+                loss_fct = SmoothedCELoss(smoothing=self.smoothing)
+                cum_loss = loss_fct(cum_logits[-1], labels)
 
+            loss = cum_loss
+            # loss = exit_losses[-1]
+            earlyloss = sum(exit_losses) * float(train_exit)
+            # earlyloss = sum(exit_losses[:-1]) * float(train_exit)
+
+            out_logits = cum_logits
+
+            outputs = (loss + earlyloss, earlyloss, out_logits, all_entropies, times) + outputs
+        else:
+            # assert we're in deployment mode
+            outputs = (all_logits[-1], exit_layer, all_entropies, times) + outputs
         return outputs  # (loss), logits, (hidden_states), (attentions), (highway_exits)

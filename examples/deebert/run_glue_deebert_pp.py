@@ -2,6 +2,7 @@ from __future__ import absolute_import, division, print_function
 
 import argparse
 import glob
+import json
 import logging
 import os
 import random
@@ -14,7 +15,7 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, Tenso
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
 
-from src.modeling_highway_bert import DeeBertForSequenceClassification
+from src.modeling_deebert_pp import DeeBertForSequenceClassification
 from src.modeling_highway_roberta import DeeRobertaForSequenceClassification
 from transformers import (
     WEIGHTS_NAME,
@@ -68,7 +69,7 @@ def get_wanted_result(result):
     return print_result
 
 
-def train(args, train_dataset, model, tokenizer, train_highway=False):
+def train(args, train_dataset, model, tokenizer, train_exit=0.):
     """ Train the model """
     if args.local_rank in [-1, 0]:
         tb_writer = SummaryWriter()
@@ -85,42 +86,61 @@ def train(args, train_dataset, model, tokenizer, train_highway=False):
 
     # Prepare optimizer and schedule (linear warmup and decay)
     no_decay = ["bias", "LayerNorm.weight"]
-    if train_highway:
-        optimizer_grouped_parameters = [
-            {
-                "params": [
-                    p
-                    for n, p in model.named_parameters()
-                    if ("highway" in n) and (not any(nd in n for nd in no_decay))
-                ],
-                "weight_decay": args.weight_decay,
-            },
-            {
-                "params": [
-                    p for n, p in model.named_parameters() if ("highway" in n) and (any(nd in n for nd in no_decay))
-                ],
-                "weight_decay": 0.0,
-            },
-        ]
-    else:
-        optimizer_grouped_parameters = [
-            {
-                "params": [
-                    p
-                    for n, p in model.named_parameters()
-                    if ("highway" not in n) and (not any(nd in n for nd in no_decay))
-                ],
-                "weight_decay": args.weight_decay,
-            },
-            {
-                "params": [
-                    p
-                    for n, p in model.named_parameters()
-                    if ("highway" not in n) and (any(nd in n for nd in no_decay))
-                ],
-                "weight_decay": 0.0,
-            },
-        ]
+
+    # if train_exit:
+    #     optimizer_grouped_parameters = [
+    #         {
+    #             "params": [
+    #                 p
+    #                 for n, p in model.named_parameters()
+    #                 if ("highway" in n) and (not any(nd in n for nd in no_decay))
+    #             ],
+    #             "weight_decay": args.weight_decay,
+    #         },
+    #         {
+    #             "params": [
+    #                 p for n, p in model.named_parameters() if ("highway" in n) and (any(nd in n for nd in no_decay))
+    #             ],
+    #             "weight_decay": 0.0,
+    #         },
+    #     ]
+    # else:
+    #     optimizer_grouped_parameters = [
+    #         {
+    #             "params": [
+    #                 p
+    #                 for n, p in model.named_parameters()
+    #                 if ("highway" not in n) and (not any(nd in n for nd in no_decay))
+    #             ],
+    #             "weight_decay": args.weight_decay,
+    #         },
+    #         {
+    #             "params": [
+    #                 p
+    #                 for n, p in model.named_parameters()
+    #                 if ("highway" not in n) and (any(nd in n for nd in no_decay))
+    #             ],
+    #             "weight_decay": 0.0,
+    #         },
+    #     ]
+    optimizer_grouped_parameters = [
+                {
+                    "params": [
+                        p
+                        for n, p in model.named_parameters()
+                        if not any(nd in n for nd in no_decay)
+                    ],
+                    "weight_decay": args.weight_decay,
+                },
+                {
+                    "params": [
+                        p
+                        for n, p in model.named_parameters()
+                        if any(nd in n for nd in no_decay)
+                    ],
+                    "weight_decay": 0.0,
+                },
+            ]
     optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
     scheduler = get_linear_schedule_with_warmup(
         optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=t_total
@@ -171,7 +191,7 @@ def train(args, train_dataset, model, tokenizer, train_highway=False):
                 inputs["token_type_ids"] = (
                     batch[2] if args.model_type in ["bert", "xlnet"] else None
                 )  # XLM, DistilBERT and RoBERTa don't use segment_ids
-            inputs["train_highway"] = train_highway
+            inputs["train_exit"] = train_exit
             outputs = model(**inputs)
             loss = outputs[0]  # model outputs are always tuple in transformers (see doc)
 
@@ -235,7 +255,7 @@ def train(args, train_dataset, model, tokenizer, train_highway=False):
     return global_step, tr_loss / global_step
 
 
-def evaluate(args, model, tokenizer, prefix="", output_layer=-1, eval_highway=False):
+def evaluate(args, model, tokenizer, prefix="", output_layer=-1):
     # Loop to handle MNLI double evaluation (matched, mis-matched)
     eval_task_names = ("mnli", "mnli-mm") if args.task_name == "mnli" else (args.task_name,)
     eval_outputs_dirs = (args.output_dir, args.output_dir + "-MM") if args.task_name == "mnli" else (args.output_dir,)
@@ -263,8 +283,10 @@ def evaluate(args, model, tokenizer, prefix="", output_layer=-1, eval_highway=Fa
         eval_loss = 0.0
         nb_eval_steps = 0
         preds = None
+        entrs = None
+        times = None
         out_label_ids = None
-        exit_layer_counter = {(i + 1): 0 for i in range(model.num_layers)}
+        # exit_layer_counter = {(i + 1): 0 for i in range(model.num_layers)}
         st = time.time()
         for batch in tqdm(eval_dataloader, desc="Evaluating"):
             model.eval()
@@ -279,53 +301,89 @@ def evaluate(args, model, tokenizer, prefix="", output_layer=-1, eval_highway=Fa
                 if output_layer >= 0:
                     inputs["output_layer"] = output_layer
                 outputs = model(**inputs)
-                if eval_highway:
-                    exit_layer_counter[outputs[-1]] += 1
-                tmp_eval_loss, logits = outputs[:2]
-
+                # if eval_highway:
+                #     exit_layer_counter[outputs[-1]] += 1
+                tmp_eval_loss, extra_eval_loss, logits, entropies, layertimes = outputs[:5]
+                logits = torch.stack(logits, 1)
+                entropies = [entr.detach().cpu().item() for entr in entropies]
+                entropies = [list(entropies) for _ in range(logits.size(0))]
+                layertimes = [list(layertimes) for _ in range(logits.size(0))]
                 eval_loss += tmp_eval_loss.mean().item()
             nb_eval_steps += 1
             if preds is None:
                 preds = logits.detach().cpu().numpy()
+                entrs = np.asarray(entropies)
+                times = np.asarray(layertimes)
                 out_label_ids = inputs["labels"].detach().cpu().numpy()
             else:
                 preds = np.append(preds, logits.detach().cpu().numpy(), axis=0)
+                entrs = np.append(entrs, np.asarray(entropies), axis=0)
+                times = np.append(times, np.asarray(layertimes), axis=0)
                 out_label_ids = np.append(out_label_ids, inputs["labels"].detach().cpu().numpy(), axis=0)
         eval_time = time.time() - st
         logger.info("Eval time: {}".format(eval_time))
 
         eval_loss = eval_loss / nb_eval_steps
         if args.output_mode == "classification":
-            preds = np.argmax(preds, axis=1)
+            preds = np.argmax(preds, axis=-1)
         elif args.output_mode == "regression":
             preds = np.squeeze(preds)
-        result = compute_metrics(eval_task, preds, out_label_ids)
+
+        result = {}
+        detailedresults = {
+            "preds": preds,
+            "labels": out_label_ids,
+            "entropies": entrs,
+            "times": times,
+        }
+        for i in range(preds.shape[1]):
+            layerpreds = preds[:, i]
+            layerresult = compute_metrics(eval_task, layerpreds, out_label_ids)
+            for k, v in layerresult.items():
+                result[f"layer{i+1}_{k}"] = v
+
+            result[f"layer{i+1}_entropy"] = entrs[:, i].mean()
+            result[f"layer{i+1}_time"] = times[:, i].sum()
+
+        result.update(layerresult)
+
         results.update(result)
 
-        if eval_highway:
-            logger.info("Exit layer counter: {}".format(exit_layer_counter))
-            actual_cost = sum([l * c for l, c in exit_layer_counter.items()])
-            full_cost = len(eval_dataloader) * model.num_layers
-            logger.info("Expected saving: {}".format(actual_cost / full_cost))
-            if args.early_exit_entropy >= 0:
-                save_fname = (
-                    args.plot_data_dir
-                    + "/"
-                    + args.model_name_or_path[2:]
-                    + "/entropy_{}.npy".format(args.early_exit_entropy)
-                )
-                if not os.path.exists(os.path.dirname(save_fname)):
-                    os.makedirs(os.path.dirname(save_fname))
-                print_result = get_wanted_result(result)
-                np.save(save_fname, np.array([exit_layer_counter, eval_time, actual_cost / full_cost, print_result]))
-                logger.info("Entropy={}\tResult={:.2f}".format(args.early_exit_entropy, 100 * print_result))
+        # if eval_highway:
+        #     logger.info("Exit layer counter: {}".format(exit_layer_counter))
+        #     actual_cost = sum([l * c for l, c in exit_layer_counter.items()])
+        #     full_cost = len(eval_dataloader) * model.num_layers
+        #     logger.info("Expected saving: {}".format(actual_cost / full_cost))
+        #     if args.early_exit_entropy >= 0:
+        #         save_fname = (
+        #             args.plot_data_dir
+        #             + "/"
+        #             + args.model_name_or_path[2:]
+        #             + "/entropy_{}.npy".format(args.early_exit_entropy)
+        #         )
+        #         if not os.path.exists(os.path.dirname(save_fname)):
+        #             os.makedirs(os.path.dirname(save_fname))
+        #         print_result = get_wanted_result(result)
+        #         np.save(save_fname, np.array([exit_layer_counter, eval_time, actual_cost / full_cost, print_result]))
+        #         logger.info("Entropy={}\tResult={:.2f}".format(args.early_exit_entropy, 100 * print_result))
 
+        logger.info("***** Eval results {} *****".format(prefix))
+        for key in sorted(result.keys()):
+            logger.info("  %s = %s", key, str(result[key]))
         output_eval_file = os.path.join(eval_output_dir, prefix, "eval_results.txt")
-        with open(output_eval_file, "w") as writer:
-            logger.info("***** Eval results {} *****".format(prefix))
-            for key in sorted(result.keys()):
-                logger.info("  %s = %s", key, str(result[key]))
-                writer.write("%s = %s\n" % (key, str(result[key])))
+        try:
+            with open(output_eval_file, "w") as writer:
+                for key in sorted(result.keys()):
+                    writer.write("%s = %s\n" % (key, str(result[key])))
+                logger.info("results saved")
+
+            logger.info("***** Detailed eval results {} *****".format(prefix))
+            output_eval_file = os.path.join(eval_output_dir, prefix, "detailed_eval_results.json")
+            with open(output_eval_file, "w") as writer:
+                json.dump(detailedresults, writer)
+                logger.info("detailed results saved")
+        except Exception as e:
+            print("Exception occurred. Nothing saved.")
 
     return results
 
@@ -416,13 +474,15 @@ def main(
         do_eval=False,
         evaluate_during_training=False,
         do_all_case=False,
-        eval_each_highway=False,        # Must set to evaluate each highway
-        eval_after_first_stage=False,
-        eval_highway=False,             # Must set if evaluating early exit models
+        # eval_each_highway=False,        # Must set to evaluate each highway
+        # eval_after_first_stage=False,
+        # eval_highway=False,             # Must set if evaluating early exit models
         per_gpu_train_batch_size=8,
         per_gpu_eval_batch_size=1,
         gradient_accumulation_steps=1,
         learning_rate=2e-5,
+        smoothing=0.1,
+        train_exit=0.,
         weight_decay=0.0,
         adam_epsilon=1e-8,
         max_grad_norm=1.0,
@@ -445,10 +505,11 @@ def main(
     ):
     args = Args(**locals().copy())
     args.model_type = args.model_name_or_path.split("-")[0]
-    args.output_dir = f"./saved_models/{args.model_name_or_path}/{args.task_name}/two_stage"
+    args.output_dir = f"./saved_models/{args.model_name_or_path}/{args.task_name}/deebert-pp"
     args.do_lower_case = not args.do_all_case
     args.num_train_epochs = args.num_train_epochs if args.num_train_epochs >= 0 else (3 if args.model_type == "bert" else 10)
     args.overwrite_cache = not args.no_overwrite_cache
+    args.data_dir = os.path.join(args.data_dir, args.task_name)
 
     if (
         os.path.exists(args.output_dir)
@@ -532,13 +593,14 @@ def main(
         config=config,
         cache_dir=args.cache_dir if args.cache_dir else None,
     )
+    model.smoothing = args.smoothing
 
     if args.model_type == "bert":
         model.bert.encoder.set_early_exit_entropy(args.early_exit_entropy)
-        model.bert.init_highway_pooler()
+        # model.bert.init_highway_pooler()
     elif args.model_type == "roberta":
         model.roberta.encoder.set_early_exit_entropy(args.early_exit_entropy)
-        model.roberta.init_highway_pooler()
+        # model.roberta.init_highway_pooler()
     else:
         raise NotImplementedError()
 
@@ -552,14 +614,14 @@ def main(
     # Training
     if args.do_train:
         train_dataset = load_and_cache_examples(args, args.task_name, tokenizer, evaluate=False)
-        global_step, tr_loss = train(args, train_dataset, model, tokenizer)
+        global_step, tr_loss = train(args, train_dataset, model, tokenizer, train_exit=args.train_exit)
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
-        if args.eval_after_first_stage:
-            result = evaluate(args, model, tokenizer, prefix="")
-            print_result = get_wanted_result(result)
-
-        train(args, train_dataset, model, tokenizer, train_highway=True)
+        # if args.eval_after_first_stage:
+        #     result = evaluate(args, model, tokenizer, prefix="")
+        #     print_result = get_wanted_result(result)
+        #
+        # train(args, train_dataset, model, tokenizer, train_exit=True)
 
     # Saving best-practices: if you use defaults names for the model, you can reload it using from_pretrained()
     if args.do_train and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
@@ -587,7 +649,14 @@ def main(
     # Evaluation
     results = {}
     if args.do_eval and args.local_rank in [-1, 0]:
-        tokenizer = tokenizer_class.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
+        # tokenizer = tokenizer_class.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
+
+        logger.info("Evaluating trained model")
+        model.to(args.device)
+        result = evaluate(args, model, tokenizer, prefix="")
+        print_result = get_wanted_result(result)
+        logger.info("Result: {}".format(print_result))
+
         checkpoints = [args.output_dir]
         if args.eval_all_checkpoints:
             checkpoints = list(
@@ -595,41 +664,41 @@ def main(
             )
 
         logger.info("Evaluate the following checkpoints: %s", checkpoints)
+
         for checkpoint in checkpoints:
             global_step = checkpoint.split("-")[-1] if len(checkpoints) > 1 else ""
             prefix = checkpoint.split("/")[-1] if checkpoint.find("checkpoint") != -1 else ""
 
             model = model_class.from_pretrained(checkpoint)
-            if args.model_type == "bert":
-                model.bert.encoder.set_early_exit_entropy(args.early_exit_entropy)
-            elif args.model_type == "roberta":
-                model.roberta.encoder.set_early_exit_entropy(args.early_exit_entropy)
-            else:
-                raise NotImplementedError()
+            # if args.model_type == "bert":
+            #     model.bert.encoder.set_early_exit_entropy(args.early_exit_entropy)
+            # elif args.model_type == "roberta":
+            #     model.roberta.encoder.set_early_exit_entropy(args.early_exit_entropy)
+            # else:
+            #     raise NotImplementedError()
 
             model.to(args.device)
-            result = evaluate(args, model, tokenizer, prefix=prefix, eval_highway=args.eval_highway)
+            result = evaluate(args, model, tokenizer, prefix=prefix)
             print_result = get_wanted_result(result)
             logger.info("Result: {}".format(print_result))
-            if args.eval_each_highway:
-                last_layer_results = print_result
-                each_layer_results = []
-                for i in range(model.num_layers):
-                    logger.info("\n")
-                    _result = evaluate(
-                        args, model, tokenizer, prefix=prefix, output_layer=i, eval_highway=args.eval_highway
-                    )
-                    if i + 1 < model.num_layers:
-                        each_layer_results.append(get_wanted_result(_result))
-                each_layer_results.append(last_layer_results)
-                save_fname = args.plot_data_dir + "/" + args.model_name_or_path[2:] + "/each_layer.npy"
-                if not os.path.exists(os.path.dirname(save_fname)):
-                    os.makedirs(os.path.dirname(save_fname))
-                np.save(save_fname, np.array(each_layer_results))
-                info_str = "Score of each layer:"
-                for i in range(model.num_layers):
-                    info_str += " {:.2f}".format(100 * each_layer_results[i])
-                logger.info(info_str)
+
+            # if True:
+            #     last_layer_results = print_result
+            #     each_layer_results = []
+            #     for i in range(model.num_layers):
+            #         logger.info("\n")
+            #         _result = evaluate(args, model, tokenizer, prefix=prefix, output_layer=i)
+            #         if i + 1 < model.num_layers:
+            #             each_layer_results.append(get_wanted_result(_result))
+            #     each_layer_results.append(last_layer_results)
+            #     save_fname = args.plot_data_dir + "/" + args.model_name_or_path[2:] + "/each_layer.npy"
+            #     if not os.path.exists(os.path.dirname(save_fname)):
+            #         os.makedirs(os.path.dirname(save_fname))
+            #     np.save(save_fname, np.array(each_layer_results))
+            #     info_str = "Score of each layer:"
+            #     for i in range(model.num_layers):
+            #         info_str += " {:.2f}".format(100 * each_layer_results[i])
+            #     logger.info(info_str)
             result = dict((k + "_{}".format(global_step), v) for k, v in result.items())
             results.update(result)
 
