@@ -494,6 +494,7 @@ def main(
         save_steps=0,                  # "Save checkpoint every X updates steps."
         eval_all_checkpoints=False,     # "Evaluate all checkpoints starting with the same prefix as model_name ending and ending with step number"
         no_cuda=False,                  # "Avoid using CUDA when available"
+        gpu=-1,
         overwrite_output_dir=False,     # "Overwrite the content of the output directory"
         no_overwrite_cache=False,          # "Overwrite the cached training and evaluation sets"
         seed=42,                        # "random seed for initialization"
@@ -533,14 +534,18 @@ def main(
         ptvsd.wait_for_attach()
 
     # Setup CUDA, GPU & distributed training
-    if args.local_rank == -1 or args.no_cuda:
-        device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
-        args.n_gpu = torch.cuda.device_count()
-    else:  # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
-        torch.cuda.set_device(args.local_rank)
-        device = torch.device("cuda", args.local_rank)
-        torch.distributed.init_process_group(backend="nccl")
+    if args.gpu != -1 and not args.no_cuda:
+        device = torch.device("cuda", args.gpu)
         args.n_gpu = 1
+    else:
+        if args.local_rank == -1 or args.no_cuda:
+            device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+            args.n_gpu = torch.cuda.device_count()
+        else:  # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
+            torch.cuda.set_device(args.local_rank)
+            device = torch.device("cuda", args.local_rank)
+            torch.distributed.init_process_group(backend="nccl")
+            args.n_gpu = 1
     args.device = device
 
     # Setup logging
