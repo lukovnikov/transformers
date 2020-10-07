@@ -382,10 +382,11 @@ def evaluate(args, model, tokenizer, prefix="", output_layer=-1):
             logger.info("  %s = %s", key, str(result[key]))
         output_eval_file = os.path.join(eval_output_dir, prefix, "eval_results.txt")
         try:
+            logger.info(f"saving eval results in '{output_eval_file}'")
             with open(output_eval_file, "w") as writer:
                 for key in sorted(result.keys()):
                     writer.write("%s = %s\n" % (key, str(result[key])))
-                logger.info("results saved")
+                logger.info("eval results saved")
 
             logger.info("***** Detailed eval results {} *****".format(prefix))
             output_eval_file = os.path.join(eval_output_dir, prefix, "detailed_eval_results.npz")
