@@ -7,6 +7,7 @@ import logging
 import os
 import random
 import time
+import traceback
 
 import fire
 import numpy as np
@@ -383,6 +384,7 @@ def evaluate(args, model, tokenizer, prefix="", output_layer=-1):
                 json.dump(detailedresults, writer)
                 logger.info("detailed results saved")
         except Exception as e:
+            traceback.print_exc()
             print("Exception occurred. Nothing saved.")
 
     return results
