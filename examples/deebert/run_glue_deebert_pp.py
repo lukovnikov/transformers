@@ -524,6 +524,7 @@ def main(
         server_ip="",                   # "For distant debugging."
         server_port="",                 # " For distant debugging."
     ):
+    print(json.dumps(locals().copy(), indent=3))
     args = Args(**locals().copy())
     args.model_type = args.model_name_or_path.split("-")[0]
     mode = "deebert-pp"
