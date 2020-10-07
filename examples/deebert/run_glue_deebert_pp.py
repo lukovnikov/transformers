@@ -380,23 +380,23 @@ def evaluate(args, model, tokenizer, prefix="", output_layer=-1):
         logger.info("***** Eval results {} *****".format(prefix))
         for key in sorted(result.keys()):
             logger.info("  %s = %s", key, str(result[key]))
-    #     output_eval_file = os.path.join(eval_output_dir, prefix, "eval_results.txt")
-    #     try:
-    #         logger.info(f"saving eval results in '{output_eval_file}'")
-    #         with open(output_eval_file, "w") as writer:
-    #             for key in sorted(result.keys()):
-    #                 writer.write("%s = %s\n" % (key, str(result[key])))
-    #             logger.info("eval results saved")
-    #
-    #         logger.info("***** Detailed eval results {} *****".format(prefix))
-    #         output_eval_file = os.path.join(eval_output_dir, prefix, "detailed_eval_results.npz")
-    #         np.savez(output_eval_file, **detailedresults)
-    #         logger.info("detailed results saved")
-    #     except Exception as e:
-    #         traceback.print_exc()
-    #         print("Exception occurred. Nothing saved.")
-    #
-    # return results
+        output_eval_file = os.path.join(eval_output_dir, prefix, "eval_results.txt")
+        try:
+            logger.info(f"saving eval results in '{output_eval_file}'")
+            with open(output_eval_file, "w") as writer:
+                for key in sorted(result.keys()):
+                    writer.write("%s = %s\n" % (key, str(result[key])))
+                logger.info("eval results saved")
+
+            logger.info("***** Detailed eval results {} *****".format(prefix))
+            output_eval_file = os.path.join(eval_output_dir, prefix, "detailed_eval_results.npz")
+            np.savez(output_eval_file, **detailedresults)
+            logger.info("detailed results saved")
+        except Exception as e:
+            traceback.print_exc()
+            print("Exception occurred. Nothing saved.")
+
+    return results
 
 
 def load_and_cache_examples(args, task, tokenizer, evaluate=False):
@@ -716,30 +716,30 @@ def main(
 
             model.to(args.device)
             result = evaluate(args, model, tokenizer, prefix=prefix)
-            print_result = get_wanted_result(result)
-            logger.info("Result: {}".format(print_result))
-
-            # if True:
-            #     last_layer_results = print_result
-            #     each_layer_results = []
-            #     for i in range(model.num_layers):
-            #         logger.info("\n")
-            #         _result = evaluate(args, model, tokenizer, prefix=prefix, output_layer=i)
-            #         if i + 1 < model.num_layers:
-            #             each_layer_results.append(get_wanted_result(_result))
-            #     each_layer_results.append(last_layer_results)
-            #     save_fname = args.plot_data_dir + "/" + args.model_name_or_path[2:] + "/each_layer.npy"
-            #     if not os.path.exists(os.path.dirname(save_fname)):
-            #         os.makedirs(os.path.dirname(save_fname))
-            #     np.save(save_fname, np.array(each_layer_results))
-            #     info_str = "Score of each layer:"
-            #     for i in range(model.num_layers):
-            #         info_str += " {:.2f}".format(100 * each_layer_results[i])
-            #     logger.info(info_str)
-            result = dict((k + "_{}".format(global_step), v) for k, v in result.items())
-            results.update(result)
-
-    return results
+    #         print_result = get_wanted_result(result)
+    #         logger.info("Result: {}".format(print_result))
+    #
+    #         # if True:
+    #         #     last_layer_results = print_result
+    #         #     each_layer_results = []
+    #         #     for i in range(model.num_layers):
+    #         #         logger.info("\n")
+    #         #         _result = evaluate(args, model, tokenizer, prefix=prefix, output_layer=i)
+    #         #         if i + 1 < model.num_layers:
+    #         #             each_layer_results.append(get_wanted_result(_result))
+    #         #     each_layer_results.append(last_layer_results)
+    #         #     save_fname = args.plot_data_dir + "/" + args.model_name_or_path[2:] + "/each_layer.npy"
+    #         #     if not os.path.exists(os.path.dirname(save_fname)):
+    #         #         os.makedirs(os.path.dirname(save_fname))
+    #         #     np.save(save_fname, np.array(each_layer_results))
+    #         #     info_str = "Score of each layer:"
+    #         #     for i in range(model.num_layers):
+    #         #         info_str += " {:.2f}".format(100 * each_layer_results[i])
+    #         #     logger.info(info_str)
+    #         result = dict((k + "_{}".format(global_step), v) for k, v in result.items())
+    #         results.update(result)
+    #
+    # return results
 
 
 if __name__ == "__main__":
