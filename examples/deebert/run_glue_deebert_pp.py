@@ -379,9 +379,9 @@ def evaluate(args, model, tokenizer, prefix="", output_layer=-1):
                 logger.info("results saved")
 
             logger.info("***** Detailed eval results {} *****".format(prefix))
-            output_eval_file = os.path.join(eval_output_dir, prefix, "detailed_eval_results.json")
+            output_eval_file = os.path.join(eval_output_dir, prefix, "detailed_eval_results.npz")
             with open(output_eval_file, "w") as writer:
-                json.dump(detailedresults, writer)
+                np.savez(writer, **detailedresults)
                 logger.info("detailed results saved")
         except Exception as e:
             traceback.print_exc()
