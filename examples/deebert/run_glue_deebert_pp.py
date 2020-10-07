@@ -736,10 +736,10 @@ def main(
             #     for i in range(model.num_layers):
             #         info_str += " {:.2f}".format(100 * each_layer_results[i])
             #     logger.info(info_str)
-            # result = dict((k + "_{}".format(global_step), v) for k, v in result.items())
-            # results.update(result)
+            result = dict((k + "_{}".format(global_step), v) for k, v in result.items())
+            results.update(result)
 
-    return results
+    # return results
 
 
 if __name__ == "__main__":
