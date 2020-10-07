@@ -311,7 +311,10 @@ def evaluate(args, model, tokenizer, prefix="", output_layer=-1):
                 cum_logits = torch.stack(cum_logits, 1)
                 all_logits = torch.stack(all_logits, 1)
                 entropies = torch.stack(entropies, 1)
-                logits = cum_logits
+                if model.mode == "deebert-pp":
+                    logits = cum_logits
+                elif model.mode == "deebert-basic" or model.mode == "baseline":
+                    logits = all_logits
                 layertimes = [list(layertimes) for _ in range(logits.size(0))]
                 eval_loss += tmp_eval_loss.mean().item()
             nb_eval_steps += 1
