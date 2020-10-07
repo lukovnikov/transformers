@@ -36,6 +36,15 @@ class DeeBertEncoder(nn.Module):
 
         self.early_exit_entropy = [-1 for _ in range(config.num_hidden_layers)]
         self.deploymode = False
+        self._mode = "deebert-pp"        # "deebert-pp" or "deebert-basic" or "baseline"
+
+    @property
+    def mode(self):
+        return self._mode
+
+    @mode.setter
+    def mode(self, value):
+        self._mode = value
 
     def set_early_exit_entropy(self, x):
         if (type(x) is float) or (type(x) is int):
@@ -82,7 +91,10 @@ class DeeBertEncoder(nn.Module):
             if self.output_attentions:
                 current_outputs = current_outputs + (all_attentions,)
 
-            early_exit = self.early_exits[i](current_outputs)
+            if self.mode == "baseline" or self.mode == "deebert-basic" and i < len(self.early_exits)-1:
+                early_exit = self.early_exits[i](tuple([co.detach() for co in current_outputs]))
+            else:
+                early_exit = self.early_exits[i](current_outputs)
             exit_logits = early_exit[0]
             # logits, pooled_output
             all_logits = all_logits + (exit_logits,)
@@ -129,6 +141,16 @@ class DeeBertModel(BertPreTrainedModel):
         self.pooler = BertPooler(config)
 
         self.init_weights()
+        self._mode = "deebert-pp"        # "deebert-pp" or "deebert-basic" or "baseline"
+
+    @property
+    def mode(self):
+        return self._mode
+
+    @mode.setter
+    def mode(self, value):
+        self._mode = value
+        self.encoder.mode = value
 
     # def init_highway_pooler(self):
     #     # pass
@@ -365,6 +387,16 @@ class DeeBertForSequenceClassification(BertPreTrainedModel):
 
         self.init_weights()
         self.smoothing = smoothing
+        self._mode = "deebert-pp"        # "deebert-pp" or "deebert-basic" or "baseline"
+
+    @property
+    def mode(self):
+        return self._mode
+
+    @mode.setter
+    def mode(self, value):
+        self._mode = value
+        self.bert.mode = value
 
     @add_start_docstrings_to_callable(BERT_INPUTS_DOCSTRING)
     def forward(
@@ -440,20 +472,32 @@ class DeeBertForSequenceClassification(BertPreTrainedModel):
                     exit_loss = loss_fct(exit_logit, labels)
                 exit_losses.append(exit_loss)
 
+            main_loss_logits = cum_logits[-1]
+            if self.mode == "baseline":
+                main_loss_logits = all_logits[-1]
+
             if self.num_labels == 1:
                 #  We are doing regression
                 loss_fct = MSELoss()
-                cum_loss = loss_fct(cum_logits[-1], labels)
+                main_loss = loss_fct(main_loss_logits, labels)
             else:
                 loss_fct = SmoothedCELoss(smoothing=self.smoothing)
-                cum_loss = loss_fct(cum_logits[-1], labels)
+                main_loss = loss_fct(main_loss_logits, labels)
 
-            loss = cum_loss
+            loss = main_loss
             # loss = exit_losses[-1]
             earlyloss = sum(exit_losses) * float(train_exit)
             # earlyloss = sum(exit_losses[:-1]) * float(train_exit)
 
-            out_logits = cum_logits
+            if self.mode == "deebert-basic":
+                loss = sum(exit_losses)
+                earlyloss = 0.
+
+            # recalculate entropies
+            if self.mode == "deebert-basic" or self.mode == "baseline":
+                all_entropies = [entropy(x) for x in all_logits]
+            else:
+                all_entropies = [entropy(x) for x in cum_logits]
 
             outputs = (loss + earlyloss, earlyloss, all_logits, cum_logits, all_entropies, times) + outputs
         else:

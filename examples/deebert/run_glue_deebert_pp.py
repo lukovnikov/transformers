@@ -309,22 +309,21 @@ def evaluate(args, model, tokenizer, prefix="", output_layer=-1):
                 tmp_eval_loss, extra_eval_loss, all_logits, cum_logits, entropies, layertimes = outputs[:6]
                 cum_logits = torch.stack(cum_logits, 1)
                 all_logits = torch.stack(all_logits, 1)
+                entropies = torch.stack(entropies, 1)
                 logits = cum_logits
-                entropies = [entr.detach().cpu().item() for entr in entropies]
-                entropies = [list(entropies) for _ in range(logits.size(0))]
                 layertimes = [list(layertimes) for _ in range(logits.size(0))]
                 eval_loss += tmp_eval_loss.mean().item()
             nb_eval_steps += 1
             if preds is None:
                 preds = logits.detach().cpu().numpy()
-                entrs = np.asarray(entropies)
+                entrs = entropies.detach().cpu().numpy()
                 times = np.asarray(layertimes)
                 out_label_ids = inputs["labels"].detach().cpu().numpy()
                 exitlogs = all_logits.detach().cpu().numpy()
                 cumlogs = cum_logits.detach().cpu().numpy()
             else:
                 preds = np.append(preds, logits.detach().cpu().numpy(), axis=0)
-                entrs = np.append(entrs, np.asarray(entropies), axis=0)
+                entrs = np.append(entrs, entropies.detach().cpu().numpy(), axis=0)
                 times = np.append(times, np.asarray(layertimes), axis=0)
                 out_label_ids = np.append(out_label_ids, inputs["labels"].detach().cpu().numpy(), axis=0)
                 exitlogs = np.append(exitlogs, all_logits.detach().cpu().numpy(), axis=0)
@@ -491,10 +490,13 @@ def main(
         do_eval=False,
         evaluate_during_training=False,
         do_all_case=False,
+        use_baseline=False,
+        use_basic_deebert=False,
         # eval_each_highway=False,        # Must set to evaluate each highway
         # eval_after_first_stage=False,
         # eval_highway=False,             # Must set if evaluating early exit models
         per_gpu_train_batch_size=8,
+        batsize=-1,
         per_gpu_eval_batch_size=1,
         gradient_accumulation_steps=1,
         learning_rate=2e-5,
@@ -504,6 +506,7 @@ def main(
         adam_epsilon=1e-8,
         max_grad_norm=1.0,
         num_train_epochs=-1,
+        epochs=-1,
         max_steps=-1,                   # "If > 0: set total number of training steps to perform. Override num_train_epochs."
         warmup_steps=0,                 # "Linear warmup over warmup_steps."
         early_exit_entropy=-1.,         # "Entropy threshold for early exit."
@@ -523,11 +526,20 @@ def main(
     ):
     args = Args(**locals().copy())
     args.model_type = args.model_name_or_path.split("-")[0]
-    args.output_dir = f"./saved_models/{args.model_name_or_path}/{args.task_name}/deebert-pp"
+    mode = "deebert-pp"
+    if args.use_basic_deebert:
+        mode = "deebert-basic"
+    elif args.use_baseline:
+        mode = "baseline"
+    args.output_dir = f"./saved_models/{args.model_name_or_path}/{args.task_name}/{mode}"
     args.do_lower_case = not args.do_all_case
     args.num_train_epochs = args.num_train_epochs if args.num_train_epochs >= 0 else (3 if args.model_type == "bert" else 10)
+    if args.epochs != -1:
+        args.num_train_epochs = args.epochs
     args.overwrite_cache = not args.no_overwrite_cache
     args.data_dir = os.path.join(args.data_dir, args.task_name)
+    if args.batsize != -1:
+        args.per_gpu_train_batch_size = args.batsize
 
     if (
         os.path.exists(args.output_dir)
@@ -616,6 +628,7 @@ def main(
         cache_dir=args.cache_dir if args.cache_dir else None,
     )
     model.smoothing = args.smoothing
+    model.mode = mode
 
     if args.model_type == "bert":
         model.bert.encoder.set_early_exit_entropy(args.early_exit_entropy)
