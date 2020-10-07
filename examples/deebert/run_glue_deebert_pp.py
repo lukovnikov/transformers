@@ -240,7 +240,8 @@ def train(args, train_dataset, model, tokenizer, train_exit=0.):
                         model.module if hasattr(model, "module") else model
                     )  # Take care of distributed/parallel training
                     model_to_save.save_pretrained(output_dir)
-                    json.dump(args._vals, os.path.join(output_dir, "training_args.json"))
+                    with open(os.path.join(args.output_dir, "training_args.json")) as f:
+                        json.dump(args._vals, f)
                     logger.info("Saving model checkpoint to %s", output_dir)
 
             if args.max_steps > 0 and global_step > args.max_steps:
@@ -676,7 +677,8 @@ def main(
         tokenizer.save_pretrained(args.output_dir)
 
         # Good practice: save your training arguments together with the trained model
-        json.dump(args._vals, os.path.join(args.output_dir, "training_args.json"))
+        with open(os.path.join(args.output_dir, "training_args.json")) as f:
+            json.dump(args._vals, f)
 
         # Load a trained model and vocabulary that you have fine-tuned
         model = model_class.from_pretrained(args.output_dir)
