@@ -493,8 +493,8 @@ class DeeBertForSequenceClassification(BertPreTrainedModel):
             # earlyloss = sum(exit_losses[:-1]) * float(train_exit)
 
             if self.mode == "deebert-basic":
-                # loss = sum(exit_losses)
-                loss = exit_losses[-1]
+                loss = sum(exit_losses)
+                # loss = exit_losses[-1]
                 earlyloss = 0.
 
             # recalculate entropies
