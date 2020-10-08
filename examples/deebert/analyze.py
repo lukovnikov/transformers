@@ -8,7 +8,7 @@ def main(
     ):
     d = np.load(p)
     time_argsorted = np.argsort(d["times"].reshape(-1))
-    time_sorted = d["time"].reshape(-1)[time_argsorted]
+    time_sorted = d["times"].reshape(-1)[time_argsorted]
     min_time = d["times"].min(-1).max()
     max_time = d["times"].max()
 
