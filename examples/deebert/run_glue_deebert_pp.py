@@ -335,6 +335,8 @@ def evaluate(args, model, tokenizer, prefix="", output_layer=-1):
         eval_time = time.time() - st
         logger.info("Eval time: {}".format(eval_time))
 
+        logs = preds
+
         eval_loss = eval_loss / nb_eval_steps
         if args.output_mode == "classification":
             preds = np.argmax(preds, axis=-1)
@@ -345,10 +347,11 @@ def evaluate(args, model, tokenizer, prefix="", output_layer=-1):
         detailedresults = {
             "preds": preds,
             "labels": out_label_ids,
-            "entropies": entrs,
+            # "entropies": entrs,
             "times": times,
-            "cumulative_logits": cumlogs,
-            "exit_logits": exitlogs,
+            "logits": logs,
+            # "cumulative_logits": cumlogs,
+            # "exit_logits": exitlogs,
         }
         for i in range(preds.shape[1]):
             layerpreds = preds[:, i]
