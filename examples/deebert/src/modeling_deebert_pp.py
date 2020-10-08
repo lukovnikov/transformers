@@ -93,18 +93,18 @@ class DeeBertEncoder(nn.Module):
 
             if (self.mode == "baseline" or self.mode == "deebert-basic") and i < len(self.early_exits)-1:
                 ee = self.early_exits[i]
-                # if self.mode == "baseline":
-                ee = self.early_exits[-1]
+                if self.mode == "baseline":
+                    ee = self.early_exits[-1]
                 early_exit = ee(tuple([co.detach() for co in current_outputs]))
             else:
                 early_exit = self.early_exits[i](current_outputs)
-            exit_logits = early_exit[0]
+            exit_logit = early_exit[0]
             # logits, pooled_output
-            all_logits = all_logits + (exit_logits,)
+            all_logits = all_logits + (exit_logit,)
             if len(cum_logits) == 0:
-                cum_logit = exit_logits
+                cum_logit = exit_logit
             else:
-                cum_logit = cum_logits[-1] + exit_logits
+                cum_logit = cum_logits[-1] + exit_logit
             cum_logits = cum_logits + (cum_logit,)
 
             exit_entropy = entropy(cum_logits[-1]).mean()
@@ -476,7 +476,7 @@ class DeeBertForSequenceClassification(BertPreTrainedModel):
                 exit_losses.append(exit_loss)
 
             main_loss_logits = cum_logits[-1]
-            if self.mode == "baseline":
+            if self.mode == "baseline" or self.mode == "deebert-basic":
                 main_loss_logits = all_logits[-1]
 
             if self.num_labels == 1:
