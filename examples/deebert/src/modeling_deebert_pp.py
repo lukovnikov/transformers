@@ -303,7 +303,7 @@ class BertExit(nn.Module):
             # _pi.copy_(pooler_input.data)
             # pooler_input = _pi
 
-            pooler_input = torch.randn_like(pooler_input)
+            pooler_input = torch.ones_like(pooler_input)
 
             # pooler_input = pooler_input.clone().detach()
         pooler_output = self.pooler(pooler_input)
