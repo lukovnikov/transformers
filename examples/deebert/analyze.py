@@ -33,8 +33,8 @@ def main(
     entr_argsorted = np.argsort(entropies.reshape(-1))[::-1]
     entr_sorted = entropies.reshape(-1)[entr_argsorted]
 
-    min_entr = entropies.min(-1).max()
-    max_entr = entropies.max()
+    best_entr = entropies.min()
+    worst_entr = entropies.max(-1).min()
 
     # for every entropy threshold, compute the metrics
 
