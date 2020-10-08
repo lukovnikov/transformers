@@ -299,7 +299,9 @@ class BertExit(nn.Module):
         # Pooler
         pooler_input = encoder_outputs[0]
         if detach:
-            pooler_input = pooler_input.clone().detach()
+            _pi = torch.zeros_like(pooler_input)
+            _pi.copy_(pooler_input.data)
+            # pooler_input = pooler_input.clone().detach()
         pooler_output = self.pooler(pooler_input)
         # "return" pooler_output
 
