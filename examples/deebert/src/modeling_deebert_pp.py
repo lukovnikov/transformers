@@ -95,11 +95,12 @@ class DeeBertEncoder(nn.Module):
                 ee = self.early_exits[i]
                 if self.mode == "baseline":
                     ee = self.early_exits[-1]
-                # early_exit = ee(tuple([co.detach() for co in current_outputs]))
-                early_exit = ee(tuple([torch.zeros_like(co) for co in current_outputs]))
+                exit_logit = ee(tuple([co.detach() for co in current_outputs]))[0]
+                # early_exit = ee(tuple([torch.zeros_like(co) for co in current_outputs]))
+                exit_logit = torch.zeros_like(exit_logit)
+                exit_logit[:, -1] = 1
             else:
-                early_exit = self.early_exits[i](current_outputs)
-            exit_logit = early_exit[0]
+                exit_logit = self.early_exits[i](current_outputs)[0]
             # logits, pooled_output
             all_logits = all_logits + (exit_logit,)
             if len(cum_logits) == 0:
