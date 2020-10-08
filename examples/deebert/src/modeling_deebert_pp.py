@@ -96,7 +96,7 @@ class DeeBertEncoder(nn.Module):
                 if self.mode == "baseline":
                     ee = self.early_exits[-1]
                 # exit_logit = ee(tuple([co.clone().detach() for co in current_outputs]))[0]
-                exit_logit = ee(current_outputs)[0]
+                exit_logit = ee(current_outputs, detach=True)[0]
                 # exit_logit = exit_logit.clone().detach()
                 # early_exit = ee(tuple([torch.zeros_like(co) for co in current_outputs]))
                 # exit_logit = torch.zeros_like(exit_logit)
@@ -295,20 +295,22 @@ class BertExit(nn.Module):
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.classifier = nn.Linear(config.hidden_size, config.num_labels)
 
-    def forward(self, encoder_outputs):
+    def forward(self, encoder_outputs, detach=False):
         # Pooler
         pooler_input = encoder_outputs[0]
+        if detach:
+            pooler_input = pooler_input.clone().detach()
         pooler_output = self.pooler(pooler_input)
         # "return" pooler_output
 
         # BertModel
-        bmodel_output = (pooler_input, pooler_output) + encoder_outputs[1:]
+        # bmodel_output = (pooler_input, pooler_output) + encoder_outputs[1:]
         # "return" bodel_output
 
         # Dropout and classification
-        pooled_output = bmodel_output[1]
+        # pooled_output = bmodel_output[1]
 
-        pooled_output = self.dropout(pooled_output)
+        pooled_output = self.dropout(pooler_output)
         logits = self.classifier(pooled_output)
 
         return logits, pooled_output
