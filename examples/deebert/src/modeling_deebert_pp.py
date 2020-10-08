@@ -97,7 +97,7 @@ class DeeBertEncoder(nn.Module):
                     ee = self.early_exits[-1]
                 # exit_logit = ee(tuple([co.clone().detach() for co in current_outputs]))[0]
                 exit_logit = ee(current_outputs, detach=True)[0]
-                exit_logit = torch.randn_like(exit_logit)
+                # exit_logit = torch.randn_like(exit_logit)
                 # exit_logit = exit_logit.clone().detach()
                 # early_exit = ee(tuple([torch.zeros_like(co) for co in current_outputs]))
                 # exit_logit = torch.zeros_like(exit_logit)
@@ -300,11 +300,11 @@ class BertExit(nn.Module):
         # Pooler
         pooler_input = encoder_outputs[0]
         if detach:
-            # _pi = torch.zeros_like(pooler_input)
-            # _pi.copy_(pooler_input.data)
-            # pooler_input = _pi
-
-            pooler_input = torch.ones_like(pooler_input)
+            _pi = torch.zeros_like(pooler_input)
+            _pi.copy_(pooler_input.data)
+            pooler_input = _pi
+            #
+            # pooler_input = torch.ones_like(pooler_input)
 
             # pooler_input = pooler_input.clone().detach()
         pooler_output = self.pooler(pooler_input)
