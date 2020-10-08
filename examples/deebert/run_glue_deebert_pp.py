@@ -655,7 +655,9 @@ def main(
     # Training
     if args.do_train:
         train_dataset = load_and_cache_examples(args, args.task_name, tokenizer, evaluate=False)
+        print(model.mode)
         global_step, tr_loss = train(args, train_dataset, model, tokenizer, train_exit=args.train_exit)
+        print(model.mode)
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
         # if args.eval_after_first_stage:
@@ -685,6 +687,7 @@ def main(
 
         # Load a trained model and vocabulary that you have fine-tuned
         model = model_class.from_pretrained(args.output_dir)
+        print(model.mode)
         tokenizer = tokenizer_class.from_pretrained(args.output_dir)
         model.to(args.device)
 
@@ -695,6 +698,7 @@ def main(
 
         logger.info("Evaluating trained model")
         model.to(args.device)
+        print(model.mode)
         result = evaluate(args, model, tokenizer, prefix="")
         print_result = get_wanted_result(result)
         logger.info("Result: {}".format(print_result))
@@ -711,6 +715,7 @@ def main(
             global_step = checkpoint.split("-")[-1] if len(checkpoints) > 1 else ""
             prefix = checkpoint.split("/")[-1] if checkpoint.find("checkpoint") != -1 else ""
 
+            print(model.mode)
             model = model_class.from_pretrained(checkpoint)
             # if args.model_type == "bert":
             #     model.bert.encoder.set_early_exit_entropy(args.early_exit_entropy)
