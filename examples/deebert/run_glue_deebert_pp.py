@@ -350,6 +350,7 @@ def evaluate(args, model, tokenizer, prefix="", output_layer=-1):
             # "entropies": entrs,
             "times": times,
             "logits": logs,
+            "task": args.task_name
             # "cumulative_logits": cumlogs,
             # "exit_logits": exitlogs,
         }
