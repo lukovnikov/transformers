@@ -9,7 +9,7 @@ def entropy(x):
     x = softmax(x, -1)
     logx = np.log(x)
     entr = x * logx
-    entr = entr.sum(-1)
+    entr = -entr.sum(-1)
     return entr
 
 
@@ -29,6 +29,12 @@ def main(
     # time_sorted = times.reshape(-1)[time_argsorted]
     min_time = times.min(-1).max()
     max_time = times.max()
+
+    entr_argsorted = np.argsort(entropies.reshape(-1))[::-1]
+    entr_sorted = entropies.reshape(-1)[entr_argsorted]
+
+    min_entr = entropies.min(-1).max()
+    max_entr = entropies.max()
 
     # for every entropy threshold, compute the metrics
 
