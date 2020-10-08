@@ -93,8 +93,8 @@ class DeeBertEncoder(nn.Module):
 
             if (self.mode == "baseline" or self.mode == "deebert-basic") and i < len(self.early_exits)-1:
                 ee = self.early_exits[i]
-                if self.mode == "baseline":
-                    ee = self.early_exits[-1]
+                # if self.mode == "baseline":
+                ee = self.early_exits[-1]
                 early_exit = ee(tuple([co.detach() for co in current_outputs]))
             else:
                 early_exit = self.early_exits[i](current_outputs)
