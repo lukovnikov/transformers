@@ -29,6 +29,7 @@ def entropy(x):
 class DeeBertEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
+        self.config = config
         self.output_attentions = config.output_attentions
         self.output_hidden_states = config.output_hidden_states
         self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
@@ -36,15 +37,15 @@ class DeeBertEncoder(nn.Module):
 
         self.early_exit_entropy = [-1 for _ in range(config.num_hidden_layers)]
         self.deploymode = False
-        self._mode = "deebert-pp"        # "deebert-pp" or "deebert-basic" or "baseline"
+        # self._mode = "deebert-pp"        # "deebert-pp" or "deebert-basic" or "baseline"
 
     @property
     def mode(self):
-        return self._mode
+        return self.config.mode
 
     @mode.setter
     def mode(self, value):
-        self._mode = value
+        self.config.mode = value
 
     def set_early_exit_entropy(self, x):
         if (type(x) is float) or (type(x) is int):
@@ -97,7 +98,7 @@ class DeeBertEncoder(nn.Module):
                     ee = self.early_exits[-1]
                 # exit_logit = ee(tuple([co.clone().detach() for co in current_outputs]))[0]
                 exit_logit = ee(current_outputs, detach=True)[0]
-                exit_logit = torch.randn_like(exit_logit)
+                # exit_logit = torch.randn_like(exit_logit)
                 # exit_logit = exit_logit.clone().detach()
                 # early_exit = ee(tuple([torch.zeros_like(co) for co in current_outputs]))
                 # exit_logit = torch.zeros_like(exit_logit)
@@ -149,15 +150,15 @@ class DeeBertModel(BertPreTrainedModel):
         self.pooler = BertPooler(config)
 
         self.init_weights()
-        self._mode = "deebert-pp"        # "deebert-pp" or "deebert-basic" or "baseline"
+        # self._mode = "deebert-pp"        # "deebert-pp" or "deebert-basic" or "baseline"
 
     @property
     def mode(self):
-        return self._mode
+        return self.config.mode
 
     @mode.setter
     def mode(self, value):
-        self._mode = value
+        self.config.mode = value
         self.encoder.mode = value
 
     # def init_highway_pooler(self):
@@ -300,13 +301,7 @@ class BertExit(nn.Module):
         # Pooler
         pooler_input = encoder_outputs[0]
         if detach:
-            _pi = torch.zeros_like(pooler_input)
-            _pi.copy_(pooler_input.data)
-            pooler_input = _pi
-            #
-            # pooler_input = torch.ones_like(pooler_input)
-
-            # pooler_input = pooler_input.clone().detach()
+            pooler_input = pooler_input.clone().detach()
         pooler_output = self.pooler(pooler_input)
         # "return" pooler_output
 
@@ -403,15 +398,15 @@ class DeeBertForSequenceClassification(BertPreTrainedModel):
 
         self.init_weights()
         self.smoothing = smoothing
-        self._mode = "deebert-pp"        # "deebert-pp" or "deebert-basic" or "baseline"
+        # self._mode = "deebert-pp"        # "deebert-pp" or "deebert-basic" or "baseline"
 
     @property
     def mode(self):
-        return self._mode
+        return self.config.mode
 
     @mode.setter
     def mode(self, value):
-        self._mode = value
+        self.config.mode = value
         self.bert.mode = value
 
     @add_start_docstrings_to_callable(BERT_INPUTS_DOCSTRING)
