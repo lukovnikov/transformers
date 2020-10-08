@@ -1,13 +1,13 @@
 import numpy as np
 import fire
 from IPython import embed
-from scipy.special import softmax, log_softmax
+from scipy.special import softmax
 from transformers import glue_compute_metrics as compute_metrics
 
 
 def entropy(x):
     x = softmax(x, -1)
-    logx = log_softmax(x, -1)
+    logx = np.log(x)
     entr = x * logx
     entr = entr.sum(-1)
     return entr
