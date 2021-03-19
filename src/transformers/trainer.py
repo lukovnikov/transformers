@@ -133,6 +133,8 @@ class Trainer:
         prediction_loss_only=False,
         tb_writer: Optional["SummaryWriter"] = None,
         optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = None,
+            wandb_name=None,
+            wandb_args=None,
     ):
         """
         Trainer is a simple but feature-complete training and eval loop for PyTorch,
@@ -144,6 +146,8 @@ class Trainer:
         """
         self.model = model
         self.args = args
+        self.wandb_args = wandb_args if wandb_args is not None else args
+        self.wandb_name = wandb_name if wandb_name is not None else "huggingface"
         if data_collator is not None:
             self.data_collator = data_collator
         else:
@@ -286,7 +290,9 @@ class Trainer:
                 (Optional): boolean - defaults to false, set to "true" to disable wandb entirely
         """
         logger.info('Automatic Weights & Biases logging enabled, to disable set os.environ["WANDB_DISABLED"] = "true"')
-        wandb.init(project=os.getenv("WANDB_PROJECT", "huggingface"), config=vars(self.args))
+        projectname = os.getenv("WANDB_PROJECT", "huggingface" if self.wandb_name is None else self.wandb_name)
+        config = vars(self.wandb_args)
+        wandb.init(project=projectname, config=config)
         # keep track of model topology and gradients
         if os.getenv("WANDB_WATCH") != "false":
             wandb.watch(
